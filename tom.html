@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🦎 مارمولک افسرده</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:#0a0a0a;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:monospace}
+        #game{background:#1a1a2e;border-radius:20px;padding:20px;border:1px solid #00ff8822;position:relative}
+        canvas{display:block;background:#0a0a1a;border-radius:10px}
+        #ui{display:flex;justify-content:space-between;padding:12px 10px;color:#00ff88;font-size:13px;border-top:1px solid #00ff8822;margin-top:10px;flex-wrap:wrap;gap:8px}
+        .stat{background:#00000044;padding:4px 12px;border-radius:6px;border:1px solid #00ff8822}
+        .btn{padding:4px 14px;background:#00ff8822;border:1px solid #00ff8844;border-radius:6px;color:#00ff88;cursor:pointer;font-size:12px}
+        .btn:hover{background:#00ff8844}
+        #aiBox{position:fixed;bottom:20px;right:20px;width:280px;background:#1a1a2e;border:1px solid #00ff8844;border-radius:12px;padding:12px;display:none;box-shadow:0 0 30px rgba(0,255,0,0.1);z-index:100}
+        #aiBox.active{display:block}
+        #aiMessages{height:120px;overflow-y:auto;color:#00ff88;font-size:12px;padding:5px;border-bottom:1px solid #00ff8822;margin-bottom:8px}
+        #aiMessages::-webkit-scrollbar{width:3px}
+        #aiMessages::-webkit-scrollbar-thumb{background:#00ff88;border-radius:10px}
+        #aiInput{display:flex;gap:6px}
+        #aiInput input{flex:1;padding:6px 10px;background:#0a0a1a;border:1px solid #00ff8844;border-radius:6px;color:#00ff88;font-family:monospace;outline:none;font-size:12px}
+        #aiInput input:focus{border-color:#00ff88}
+        #aiInput button{padding:6px 12px;background:#00ff8822;border:1px solid #00ff8844;border-radius:6px;color:#00ff88;cursor:pointer}
+        #aiInput button:hover{background:#00ff8844}
+        #gameOver{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.95);padding:30px 40px;border-radius:15px;border:2px solid #ff000066;text-align:center;z-index:50}
+        #gameOver h1{color:#ff0000;font-size:28px}
+        #gameOver p{color:#fff;margin:8px 0}
+        .depression-text{color:#ff6b6b;font-size:14px;text-align:center;padding:5px;opacity:0.7}
+    </style>
+</head>
+<body>
+
+<body>
+    <div id="game">
+        <canvas id="c" width="800" height="500"></canvas>
+        
+        <div id="ui">
+            <div class="stat">🏆 <span id="score">0</span></div>
+            <div class="stat">💰 <span id="coins">0</span></div>
+            <div class="stat">❤️ <span id="health">100</span></div>
+            <div class="stat">💀 <span id="kills">0</span></div>
+            <div class="stat">🔥 <span id="combo">0</span>x</div>
+            <button class="btn" onclick="toggleAI()">🧠 AI</button>
+            <button class="btn" onclick="resetGame()">🔄</button>
+        </div>
+        
+        <div id="gameOver">
+            <h1>💀 مردی</h1>
+            <p>امتیاز: <span id="finalScore">0</span></p>
+            <p>سکه: <span id="finalCoins">0</span></p>
+            <button class="btn" onclick="resetGame()" style="margin-top:15px;padding:8px 25px;font-size:16px;">دوباره</button>
+        </div>
+    </div>
+    
+    <div id="aiBox">
+        <div style="display:flex;justify-content:space-between;color:#00ff88;margin-bottom:8px;font-size:13px;">
+            <span>🧠 مارمولک افسرده</span>
+            <span style="cursor:pointer;" onclick="toggleAI()">✕</span>
+        </div>
+        <div id="aiMessages">
+            <div style="color:#888;font-size:12px;">سلام... من مارمولک افسرده‌ام...</div>
+        </div>
+        <div id="aiInput">
+            <input id="aiInputText" placeholder="با مارمولک حرف بزن..." onkeydown="if(event.key==='Enter') sendAI()">
+            <button onclick="sendAI()">ارسال</button>
+        </div>
+    </div>
+    
+    <script>
+
+    // ========== بخش 3: تنظیمات و متغیرها ==========
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 800, H = 500;
+
+let score = 0, coins = 0, health = 100, kills = 0, combo = 0;
+let gameOver = false;
+let frame = 0;
+let depressionMsg = '';
+let depressionTimer = 0;
+
+const keys = { left: false, right: false, up: false, z: false, x: false };
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowLeft') keys.left = true;
+    if (e.key === 'ArrowRight') keys.right = true;
+    if (e.key === 'ArrowUp') keys.up = true;
+    if (e.key === 'z' || e.key === 'Z') keys.z = true;
+    if (e.key === 'x' || e.key === 'X') keys.x = true;
+    if (e.key === ' ') { e.preventDefault(); keys.up = true; }
+});
+document.addEventListener('keyup', e => {
+    if (e.key === 'ArrowLeft') keys.left = false;
+    if (e.key === 'ArrowRight') keys.right = false;
+    if (e.key === 'ArrowUp') keys.up = false;
+    if (e.key === 'z' || e.key === 'Z') keys.z = false;
+    if (e.key === 'x' || e.key === 'X') keys.x = false;
+    if (e.key === ' ') { e.preventDefault(); keys.up = false; }
+});
+
+// ========== بخش 4: کلاس مارمولک ==========
+
+const lizard = {
+    x: 400, y: 350, w: 18, h: 22,
+    vx: 0, vy: 0, speed: 3, jump: -7.5, gravity: 0.4,
+    onGround: false, facing: 1,
+    punching: false, kicking: false,
+    punchTimer: 0, kickTimer: 0,
+    comboCount: 0, comboTimer: 0,
+    tailWag: 0, depressed: true,
+    
+    reset() {
+        this.x = 400; this.y = 350;
+        this.vx = 0; this.vy = 0;
+        this.onGround = false;
+        this.punching = false; this.kicking = false;
+        this.comboCount = 0; this.comboTimer = 0;
+    },
+    
+    update() {
+        if (gameOver) return;
+        if (keys.left) { this.vx = -this.speed; this.facing = -1; }
+        else if (keys.right) { this.vx = this.speed; this.facing = 1; }
+        else this.vx *= 0.8;
+        
+        if (keys.up && this.onGround) {
+            this.vy = this.jump;
+            this.onGround = false;
+        }
+        
+        this.vy += this.gravity;
+        this.x += this.vx;
+        this.y += this.vy;
+        
+        if (this.y + this.h > H - 20) {
+            this.y = H - 20 - this.h;
+            this.vy = 0;
+            this.onGround = true;
+        }
+        if (this.x < 0) this.x = 0;
+        if (this.x + this.w > W) this.x = W - this.w;
+        if (this.y < 0) { this.y = 0; this.vy = 0; }
+        
+        if (this.punching) { this.punchTimer--; if (this.punchTimer <= 0) this.punching = false; }
+        if (this.kicking) { this.kickTimer--; if (this.kickTimer <= 0) this.kicking = false; }
+        
+        if (keys.z && !this.punching && !this.kicking) {
+            this.punching = true; this.punchTimer = 10;
+            this.comboCount++; this.comboTimer = 30;
+            doPunch();
+        }
+        if (keys.x && !this.kicking && !this.punching) {
+            this.kicking = true; this.kickTimer = 12;
+            this.comboCount++; this.comboTimer = 30;
+            doKick();
+        }
+        
+        if (this.comboTimer > 0) this.comboTimer--;
+        else this.comboCount = 0;
+        
+        combo = this.comboCount;
+        this.tailWag += 0.12;
+    },
+    
+    draw() {
+        let x = this.x, y = this.y;
+        let color = this.punching ? '#00ff44' : this.kicking ? '#ff8800' : '#00cc66';
+        
+        ctx.fillStyle = color;
+        ctx.shadowColor = '#00ff8844';
+        ctx.shadowBlur = 10;
+        ctx.fillRect(x, y, this.w, this.h);
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#00ff88';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, this.w, this.h);
+        
+        // سر
+        let hx = this.facing === 1 ? x + this.w : x - 5;
+        ctx.fillStyle = '#00cc66';
+        ctx.fillRect(hx, y - 3, 5, 7);
+        
+        // چشم
+        ctx.fillStyle = '#fff';
+        let ex = this.facing === 1 ? x + this.w - 2 : x + 2;
+        ctx.fillRect(ex, y + 2, 3, 3);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(ex + (this.facing === 1 ? 1 : -1), y + 3, 1, 1);
+        
+        // دهان افسرده
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1;
+        let mx = this.facing === 1 ? x + this.w - 4 : x + 4;
+        ctx.beginPath();
+        ctx.arc(mx, y + 10, 3, 0, Math.PI, true);
+        ctx.stroke();
+        
+        // دم
+        let tx = this.facing === 1 ? x : x + this.w;
+        let ty = y + this.h - 3;
+        ctx.strokeStyle = '#00cc66';
+        ctx.lineWidth = 2.5;
+        let wag = Math.sin(this.tailWag) * 3;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(tx + (this.facing === 1 ? -10 : 10), ty - 4 + wag);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(tx + (this.facing === 1 ? -10 : 10), ty - 4 + wag);
+        ctx.lineTo(tx + (this.facing === 1 ? -16 : 16), ty - 7 + wag * 0.6);
+        ctx.stroke();
+        
+        // کومبو
+        if (this.comboCount >= 2) {
+            ctx.fillStyle = '#ff8800';
+            ctx.font = 'bold 13px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`🔥 ${this.comboCount}x`, x + this.w/2, y - 8);
+        }
+    },
+    
+    getAttackRect() {
+        if (this.punching) {
+            return { x: this.facing === 1 ? this.x + this.w : this.x - 18, y: this.y, w: 18, h: this.h };
+        }
+        if (this.kicking) {
+            return { x: this.facing === 1 ? this.x + this.w : this.x - 22, y: this.y + 6, w: 22, h: 14 };
+        }
+        return null;
+    }
+};
+
+// ========== بخش 5: دشمنان، روح‌ها و سکه‌ها ==========
+
+let enemies = [], spirits = [], coinsList = [], particles = [];
+
+function spawnEnemy() {
+    if (enemies.length >= 4) return;
+    enemies.push({
+        x: 30 + Math.random() * (W - 60),
+        y: 80 + Math.random() * 200,
+        w: 18, h: 22,
+        health: 30, maxHealth: 30,
+        speed: 0.4 + Math.random() * 0.8,
+        alive: true, attackCooldown: 0
+    });
+}
+
+function spawnSpirit() {
+    if (spirits.length >= 3) return;
+    spirits.push({
+        x: 20 + Math.random() * (W - 40),
+        y: 30 + Math.random() * 120,
+        alive: true,
+        speed: 0.4 + Math.random() * 0.6,
+        size: 10 + Math.random() * 6
+    });
+}
+
+function spawnCoin() {
+    if (coinsList.length >= 6) return;
+    coinsList.push({
+        x: 30 + Math.random() * (W - 60),
+        y: 80 + Math.random() * 200,
+        alive: true,
+        value: [10, 20, 50][Math.floor(Math.random() * 3)],
+        bob: Math.random() * 100
+    });
+}
+
+function spawnParticles(x, y, color, count = 8) {
+    for (let i = 0; i < count; i++) {
+        particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 3,
+            vy: (Math.random() - 0.5) * 3 - 1,
+            life: 15 + Math.random() * 15,
+            maxLife: 30,
+            color: color || '#00ff88',
+            size: 2 + Math.random() * 3
+        });
+    }
+}
+
+// ========== بخش 6: توابع ضربه و برخورد ==========
+
+function rectCollide(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x &&
+           a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function doPunch() {
+    let rect = lizard.getAttackRect();
+    if (!rect) return;
+    let dmg = 15 + (lizard.comboCount >= 3 ? 10 : 0);
+    
+    for (let e of enemies) {
+        if (!e.alive) continue;
+        if (rectCollide(rect, {x:e.x, y:e.y, w:e.w, h:e.h})) {
+            e.health -= dmg;
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff4400', 12);
+            if (e.health <= 0) {
+                e.alive = false;
+                kills++; score += 20; coins += 2;
+                spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff8800', 20);
+            }
+        }
+    }
+    for (let s of spirits) {
+        if (!s.alive) continue;
+        if (Math.hypot(s.x - (lizard.x + lizard.w/2 + lizard.facing * 18),
+                       s.y - (lizard.y + lizard.h/2)) < 25) {
+            s.alive = false;
+            score += 10;
+            spawnParticles(s.x, s.y, '#aa44ff', 15);
+        }
+    }
+}
+
+function doKick() {
+    let rect = lizard.getAttackRect();
+    if (!rect) return;
+    let dmg = 20 + (lizard.comboCount >= 3 ? 15 : 0);
+    
+    for (let e of enemies) {
+        if (!e.alive) continue;
+        if (rectCollide(rect, {x:e.x, y:e.y, w:e.w, h:e.h})) {
+            e.health -= dmg;
+            spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff6600', 15);
+            if (e.health <= 0) {
+                e.alive = false;
+                kills++; score += 25; coins += 3;
+                spawnParticles(e.x + e.w/2, e.y + e.h/2, '#ff8800', 25);
+            }
+        }
+    }
+    for (let s of spirits) {
+        if (!s.alive) continue;
+        if (Math.hypot(s.x - (lizard.x + lizard.w/2 + lizard.facing * 22),
+                       s.y - (lizard.y + lizard.h/2)) < 30) {
+            s.alive = false;
+            score += 15;
+            spawnParticles(s.x, s.y, '#aa44ff', 18);
+        }
+    }
+}
+
+// ========== بخش 7: هوش مصنوعی ==========
+
+const API_KEY = "gsk_iAUjHldsNqXZEMYU4rRdWGdyb3FY6wM7ZxWUcj3HRZ09hQF3Pv>";
+const API_URL = "https://api.groq.com/openai/v1/chat/completions";
+const MODEL = "llama-3.3-70b-versatile";
+
+let aiBoxOpen = false;
+const depressionMsgs = ['😔 زندگی...', '💔 بازم شکست...', '😞 تاریکیه...', '💭 کاش...', '😢 تنها'];
+
+function toggleAI() {
+    aiBoxOpen = !aiBoxOpen;
+    document.getElementById('aiBox').classList.toggle('active');
+    if (aiBoxOpen) document.getElementById('aiInputText').focus();
+}
+
+function addAIMessage(text, isUser = false) {
+    const box = document.getElementById('aiMessages');
+    const div = document.createElement('div');
+    div.style.cssText = `
+        color: ${isUser ? '#88ddff' : '#00ff88'};
+        padding: 4px 0;
+        border-bottom: 1px solid #00ff8811;
+        font-size: 12px;
+        ${isUser ? 'text-align:right;' : ''}
+    `;
+    div.textContent = (isUser ? '🧑 ' : '🦎 ') + text;
+    box.appendChild(div);
+    box.scrollTop = box.scrollHeight;
+}
+
+async function sendAI() {
+    const input = document.getElementById('aiInputText');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    addAIMessage(text, true);
+    
+    const sensor = {
+        health: Math.round(health), score, coins, kills, combo,
+        enemies: enemies.filter(e=>e.alive).length,
+        spirits: spirits.filter(s=>s.alive).length
+    };
+    
+    const prompt = `شما مارمولک افسرده‌اید. وضعیت: سلامتی ${sensor.health}, امتیاز ${sensor.score}, سکه ${sensor.coins}, کشته ${sensor.kills}, کومبو ${sensor.combo}. کاربر: "${text}". پاسخ کوتاه افسرده بده (حداکثر 40 کاراکتر)`;
+    
+    try {
+        const res = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: prompt }], max_tokens: 50 })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            addAIMessage(data.choices[0].message.content);
+        } else addAIMessage('😔 نتونستم...');
+    } catch { addAIMessage('💔 دنیا تاریکه...'); }
+}
+
+// ========== بخش 8: حلقه اصلی بروزرسانی ==========
+
+function update() {
+    if (gameOver) return;
+    frame++;
+    
+    lizard.update();
+    
+    if (frame % 100 === 0) spawnEnemy();
+    if (frame % 70 === 0) spawnSpirit();
+    if (frame % 50 === 0) spawnCoin();
+    
+    // به‌روزرسانی دشمنان
+    for (let e of enemies) {
+        if (!e.alive) continue;
+        let dx = lizard.x - e.x, dy = lizard.y - e.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist > 0) {
+            e.x += (dx / dist) * e.speed * 0.5;
+            e.y += (dy / dist) * e.speed * 0.2;
+        }
+        if (dist < 28 && e.attackCooldown <= 0) {
+            health -= 5;
+            e.attackCooldown = 30;
+            spawnParticles(lizard.x + lizard.w/2, lizard.y + lizard.h/2, '#ff0000', 10);
+            if (health <= 0) { health = 0; gameOver = true; showGameOver(); }
+        }
+        if (e.attackCooldown > 0) e.attackCooldown--;
+    }
+    
+    // به‌روزرسانی روح‌ها
+    for (let s of spirits) {
+        if (!s.alive) continue;
+        let dx = lizard.x - s.x, dy = lizard.y - s.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist > 0) {
+            s.x += (dx / dist) * s.speed;
+            s.y += (dy / dist) * s.speed * 0.3;
+        }
+        if (dist < 22) {
+            health -= 3;
+            s.alive = false;
+            spawnParticles(s.x, s.y, '#aa44ff', 12);
+            if (health <= 0) { health = 0; gameOver = true; showGameOver(); }
+        }
+    }
+    
+    // جمع‌آوری سکه
+    for (let c of coinsList) {
+        if (!c.alive) continue;
+        c.bob += 0.05;
+        c.y += Math.sin(c.bob) * 0.2;
+        if (Math.hypot(c.x - lizard.x - lizard.w/2, c.y - lizard.y - lizard.h/2) < 22) {
+            c.alive = false;
+            coins += c.value;
+            score += c.value * 2;
+            spawnParticles(c.x, c.y, '#ffd700', 10);
+        }
+    }
+    
+    // پاک‌سازی
+    enemies = enemies.filter(e => e.alive);
+    spirits = spirits.filter(s => s.alive);
+    coinsList = coinsList.filter(c => c.alive);
+    
+    // پارتیکل‌ها
+    for (let p of particles) {
+        p.x += p.vx; p.y += p.vy;
+        p.life--; p.vy += 0.05;
+    }
+    particles = particles.filter(p => p.life > 0);
+    
+    // پیام افسردگی
+    depressionTimer++;
+    if (depressionTimer > 200 && health < 60) {
+        depressionTimer = 0;
+        depressionMsg = depressionMsgs[Math.floor(Math.random() * depressionMsgs.length)];
+        setTimeout(() => { depressionMsg = ''; }, 2000);
+    }
+    
+    // بروزرسانی UI
+    document.getElementById('score').textContent = score;
+    document.getElementById('coins').textContent = coins;
+    document.getElementById('health').textContent = Math.round(health);
+    document.getElementById('kills').textContent = kills;
+    document.getElementById('combo').textContent = combo;
+}
+
+// ========== بخش 9: تابع رسم ==========
+
+function draw() {
+    ctx.clearRect(0, 0, W, H);
+    
+    // زمین
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, H - 20, W, 20);
+    ctx.fillStyle = '#00ff8822';
+    for (let i = 0; i < W; i += 30) ctx.fillRect(i, H - 18, 15, 2);
+    
+    // سکه‌ها
+    for (let c of coinsList) {
+        if (!c.alive) continue;
+        ctx.fillStyle = '#ffd700';
+        ctx.shadowColor = '#ffd70044';
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#000';
+        ctx.font = '7px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(c.value, c.x, c.y + 3);
+    }
+    
+    // روح‌ها
+    for (let s of spirits) {
+        if (!s.alive) continue;
+        let alpha = 0.5 + Math.sin(frame / 20 + s.x) * 0.3;
+        ctx.fillStyle = `rgba(150,50,255,${alpha})`;
+        ctx.shadowColor = `rgba(150,50,255,${alpha * 0.5})`;
+        ctx.shadowBlur = 15;
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = `rgba(255,100,100,${alpha})`;
+        ctx.beginPath();
+        ctx.arc(s.x - 3, s.y - 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(s.x + 3, s.y - 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    
+    // دشمنان
+    for (let e of enemies) {
+        if (!e.alive) continue;
+        ctx.fillStyle = '#ff4444';
+        ctx.shadowColor = '#ff444444';
+        ctx.shadowBlur = 8;
+        ctx.fillRect(e.x, e.y, e.w, e.h);
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(e.x, e.y, e.w, e.h);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(e.x + 3, e.y + 3, 3, 3);
+        ctx.fillRect(e.x + e.w - 6, e.y + 3, 3, 3);
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(e.x + 4, e.y + 4, 1.5, 1.5);
+        ctx.fillRect(e.x + e.w - 5, e.y + 4, 1.5, 1.5);
+        if (e.health < e.maxHealth) {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(e.x, e.y - 5, e.w, 3);
+            ctx.fillStyle = '#00ff00';
+            ctx.fillRect(e.x, e.y - 5, e.w * (e.health / e.maxHealth), 3);
+        }
+    }
+    
+    // پارتیکل‌ها
+    for (let p of particles) {
+        ctx.globalAlpha = p.life / p.maxLife;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, p.size, p.size);
+    }
+    ctx.globalAlpha = 1;
+    
+    // مارمولک
+    lizard.draw();
+    
+    // پیام افسردگی
+    if (depressionMsg) {
+        ctx.fillStyle = 'rgba(255,100,100,0.7)';
+        ctx.font = '16px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(depressionMsg, W/2, 35);
+    }
+    
+    if (health < 30 && !gameOver) {
+        ctx.fillStyle = 'rgba(255,0,0,0.3)';
+        ctx.font = '14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚠️ دارم میمیرم...', W/2, 55);
+    }
+    
+    ctx.fillStyle = '#444';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('← → حرکت | ↑ پرش | Z مشت | X لگد', 10, H - 5);
+}
+
+        // ========== بخش 10: توابع کمکی و حلقه نهایی ==========
+        
+        function showGameOver() {
+            document.getElementById('gameOver').style.display = 'block';
+            document.getElementById('finalScore').textContent = score;
+            document.getElementById('finalCoins').textContent = coins;
+        }
+        
+        function resetGame() {
+            gameOver = false;
+            health = 100;
+            score = 0;
+            coins = 0;
+            kills = 0;
+            combo = 0;
+            enemies = [];
+            spirits = [];
+            coinsList = [];
+            particles = [];
+            depressionMsg = '';
+            lizard.reset();
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('health').textContent = '100';
+            for (let i = 0; i < 2; i++) spawnEnemy();
+            for (let i = 0; i < 3; i++) spawnCoin();
+        }
+        
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // شروع بازی
+        for (let i = 0; i < 2; i++) spawnEnemy();
+        for (let i = 0; i < 3; i++) spawnCoin();
+        gameLoop();
+        
+        console.log('🦎 مارمولک افسرده روشن شد!');
+        console.log('🧠 برای حرف زدن با مارمولک دکمه AI رو بزن');
+    </script>
+</body>
+</html>
+
