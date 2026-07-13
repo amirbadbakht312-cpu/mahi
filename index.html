@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>دنیای بزرگ · مانع قرمز · ۴ شکل جهتی با تصاویر</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #0a0a14;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: none;
+            cursor: crosshair;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .instruction {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            pointer-events: none;
+            z-index: 10;
+            backdrop-filter: blur(6px);
+            padding: 6px 22px;
+            border-radius: 30px;
+            background: rgba(15, 15, 30, 0.55);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            text-align: center;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="instruction">🔴 مانع قرمز · ▲بالا=مثلث | ■پایین=مربع | ●چپ=دایره | ⏢راست=ذوزنقه</div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // ==================== ابعاد دنیا ====================
+            const WORLD_MULTIPLIER = 6;
+            let worldWidth = 2400;
+            let worldHeight = 1800;
+
+            // ==================== تنظیمات شکل ====================
+            const BASE_SIZE = 48;
+            const MOVE_SPEED = 4.0;
+            const ARRIVAL_THRESHOLD = 2.5;
+
+            let squareWorldX = 400;
+            let squareWorldY = 350;
+
+            // وضعیت شکل: 'square', 'triangle', 'circle', 'trapezoid'
+            let currentShape = 'square';
+
+            // تایمر چشمک زدن تصویر (بر حسب فریم)
+            let imageFlashTimer = 0;
+            const FLASH_INTERVAL = 6; // هر ۶ فریم (حدود ۰.۱ ثانیه در ۶۰fps)
+            let currentFlashIndex = 0; // 0 = تصویر اصلی, 1 = فلش اول, 2 = فلش دوم
+
+            // هدف
+            let targetWorldX = 400;
+            let targetWorldY = 350;
+            let hasTarget = false;
+
+            // مسیر جایگزین
+            let waypoints = [];
+
+            let targetAlpha = 0;
+            const TARGET_MAX_ALPHA = 0.95;
+            const TARGET_FADE_SPEED = 0.028;
+
+            // دنباله
+            const trailPositions = [];
+            const TRAIL_LENGTH = 12;
+
+            // ==================== مانع دایره‌ای ====================
+            let obstacleCenterX = 1200;
+            let obstacleCenterY = 900;
+            const OBSTACLE_RADIUS = 160;
+            const OBSTACLE_BUFFER = 14;
+
+            // ==================== دوربین ====================
+            let cameraX = 0;
+            let cameraY = 0;
+            const CAMERA_MARGIN = 180;
+
+            // ==================== مینیمپ ====================
+            const MINIMAP_WIDTH = 155;
+            const MINIMAP_HEIGHT = 110;
+            const MINIMAP_PADDING = 16;
+            const MINIMAP_BORDER_RADIUS = 10;
+
+            // ==================== تصاویر ====================
+            const IMAGE_BASE_PATH = 'assets/images/';
+            
+            const IMAGES = {
+                // مثلث
+                triangle: IMAGE_BASE_PATH + 'pangghadamposht1.jpeg',
+                triangleFlash1: IMAGE_BASE_PATH + 'pangghadamposht2.jpeg',
+                triangleFlash2: IMAGE_BASE_PATH + 'pangghadamposht2.jpeg', // همون تصویر ولی قرینه
+                // دایره (تصاویر چشمک از ذوزنقه گرفته شده و قرینه نمایش داده می‌شوند)
+                circle: IMAGE_BASE_PATH + 'pangghadamchap1.jpeg',
+                circleFlash1: IMAGE_BASE_PATH + 'pangghadamrast2.jpeg', // از ذوزنقه گرفته شده
+                circleFlash2: IMAGE_BASE_PATH + 'pangghadamrast3.jpeg', // از ذوزنقه گرفته شده
+                // ذوزنقه
+                trapezoid: IMAGE_BASE_PATH + 'pangghadamrast1.jpeg',
+                trapezoidFlash1: IMAGE_BASE_PATH + 'pangghadamrast2.jpeg',
+                trapezoidFlash2: IMAGE_BASE_PATH + 'pangghadamrast3.jpeg',
+                // مربع
+                square: IMAGE_BASE_PATH + 'pangghadamjolo1.jpeg',
+                squareFlash1: IMAGE_BASE_PATH + 'pangghadamjolo2.jpeg',
+                squareFlash2: IMAGE_BASE_PATH + 'pangghadamjolo3.jpeg',
+            };
+
+            // کش کردن تصاویر
+            const imageCache = {};
+            function loadImage(src) {
+                if (!imageCache[src]) {
+                    const img = new Image();
+                    img.src = src;
+                    imageCache[src] = img;
+                }
+                return imageCache[src];
+            }
+
+            // ==================== توابع تصویر ====================
+            function getCurrentImage() {
+                if (hasTarget && currentFlashIndex === 1) {
+                    return getFlash1Image();
+                } else if (hasTarget && currentFlashIndex === 2) {
+                    return getFlash2Image();
+                }
+                return getBaseImage();
+            }
+
+            function getBaseImage() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangle);
+                    case 'circle': return loadImage(IMAGES.circle);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoid);
+                    default: return loadImage(IMAGES.square);
+                }
+            }
+
+            function getFlash1Image() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangleFlash1);
+                    case 'circle': return loadImage(IMAGES.circleFlash1);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoidFlash1);
+                    default: return loadImage(IMAGES.squareFlash1);
+                }
+            }
+
+            function getFlash2Image() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangleFlash2);
+                    case 'circle': return loadImage(IMAGES.circleFlash2);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoidFlash2);
+                    default: return loadImage(IMAGES.squareFlash2);
+                }
+            }
+
+            // تشخیص اینکه آیا تصویر باید قرینه شود
+            function shouldFlipImage() {
+                // مثلث در فلش دوم قرینه می‌شود
+                if (currentShape === 'triangle' && hasTarget && currentFlashIndex === 2) {
+                    return true;
+                }
+                // دایره در فلش اول و دوم قرینه می‌شود (چون تصاویر از ذوزنقه هستند)
+                if (currentShape === 'circle' && hasTarget && (currentFlashIndex === 1 || currentFlashIndex === 2)) {
+                    return true;
+                }
+                return false;
+            }
+
+            // ==================== توابع هندسی ====================
+            function updateWorldSize() {
+                worldWidth = window.innerWidth * WORLD_MULTIPLIER;
+                worldHeight = window.innerHeight * WORLD_MULTIPLIER;
+                obstacleCenterX = worldWidth / 2;
+                obstacleCenterY = worldHeight / 2;
+            }
+
+            function clampSquareToWorld() {
+                if (squareWorldX < 0) squareWorldX = 0;
+                if (squareWorldY < 0) squareWorldY = 0;
+                if (squareWorldX + BASE_SIZE > worldWidth) squareWorldX = worldWidth - BASE_SIZE;
+                if (squareWorldY + BASE_SIZE > worldHeight) squareWorldY = worldHeight - BASE_SIZE;
+            }
+
+            function isPointInsideObstacle(px, py, buffer = 0) {
+                const dx = px - obstacleCenterX;
+                const dy = py - obstacleCenterY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                return dist < OBSTACLE_RADIUS + buffer;
+            }
+
+            function isSquareCollidingWithObstacle(sx, sy, buffer = 0) {
+                const corners = [
+                    { x: sx, y: sy },
+                    { x: sx + BASE_SIZE, y: sy },
+                    { x: sx, y: sy + BASE_SIZE },
+                    { x: sx + BASE_SIZE, y: sy + BASE_SIZE }
+                ];
+                for (const corner of corners) {
+                    if (isPointInsideObstacle(corner.x, corner.y, buffer)) return true;
+                }
+                const centerX = sx + BASE_SIZE / 2;
+                const centerY = sy + BASE_SIZE / 2;
+                if (isPointInsideObstacle(centerX, centerY, buffer)) return true;
+                return false;
+            }
+
+            function getClosestSafePointOnObstacle(worldX, worldY) {
+                const dx = worldX - obstacleCenterX;
+                const dy = worldY - obstacleCenterY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 0.01) {
+                    const angle = Math.random() * Math.PI * 2;
+                    return {
+                        x: obstacleCenterX + Math.cos(angle) * (OBSTACLE_RADIUS + OBSTACLE_BUFFER + BASE_SIZE/2),
+                        y: obstacleCenterY + Math.sin(angle) * (OBSTACLE_RADIUS + OBSTACLE_BUFFER + BASE_SIZE/2)
+                    };
+                }
+                const safeDist = OBSTACLE_RADIUS + OBSTACLE_BUFFER + BASE_SIZE / 2;
+                const normX = dx / dist;
+                const normY = dy / dist;
+                return {
+                    x: obstacleCenterX + normX * safeDist,
+                    y: obstacleCenterY + normY * safeDist
+                };
+            }
+
+            function doesLineIntersectObstacle(x1, y1, x2, y2) {
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const fx = x1 - obstacleCenterX;
+                const fy = y1 - obstacleCenterY;
+                const a = dx * dx + dy * dy;
+                const b = 2 * (fx * dx + fy * dy);
+                const c = fx * fx + fy * fy - (OBSTACLE_RADIUS + OBSTACLE_BUFFER + BASE_SIZE/2) ** 2;
+                let discriminant = b * b - 4 * a * c;
+                if (discriminant < 0) return false;
+                discriminant = Math.sqrt(discriminant);
+                const t1 = (-b - discriminant) / (2 * a);
+                const t2 = (-b + discriminant) / (2 * a);
+                if (t1 >= 0 && t1 <= 1) return true;
+                if (t2 >= 0 && t2 <= 1) return true;
+                return false;
+            }
+
+            function calculatePathWithObstacleAvoidance(fromX, fromY, toX, toY) {
+                const path = [];
+                if (!doesLineIntersectObstacle(fromX, fromY, toX, toY)) {
+                    return path;
+                }
+                const fromSafe = getClosestSafePointOnObstacle(fromX, fromY);
+                const toSafe = getClosestSafePointOnObstacle(toX, toY);
+                const angleFrom = Math.atan2(fromSafe.y - obstacleCenterY, fromSafe.x - obstacleCenterX);
+                const angleTo = Math.atan2(toSafe.y - obstacleCenterY, toSafe.x - obstacleCenterX);
+                let angleDiff = angleTo - angleFrom;
+                while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                const safeRadius = OBSTACLE_RADIUS + OBSTACLE_BUFFER + BASE_SIZE / 2;
+                const midAngle = angleFrom + angleDiff / 2;
+                const midPoint = {
+                    x: obstacleCenterX + Math.cos(midAngle) * safeRadius * 1.4,
+                    y: obstacleCenterY + Math.sin(midAngle) * safeRadius * 1.4
+                };
+                midPoint.x = Math.max(BASE_SIZE, Math.min(worldWidth - BASE_SIZE, midPoint.x));
+                midPoint.y = Math.max(BASE_SIZE, Math.min(worldHeight - BASE_SIZE, midPoint.y));
+                path.push(midPoint);
+                return path;
+            }
+
+            function updateCamera() {
+                const viewWidth = canvas.width;
+                const viewHeight = canvas.height;
+                const squareCenterX = squareWorldX + BASE_SIZE / 2;
+                const squareCenterY = squareWorldY + BASE_SIZE / 2;
+                let targetCamX = cameraX;
+                let targetCamY = cameraY;
+                const leftEdge = cameraX + CAMERA_MARGIN;
+                const rightEdge = cameraX + viewWidth - CAMERA_MARGIN;
+                const topEdge = cameraY + CAMERA_MARGIN;
+                const bottomEdge = cameraY + viewHeight - CAMERA_MARGIN;
+                if (squareCenterX < leftEdge) targetCamX = squareCenterX - CAMERA_MARGIN;
+                else if (squareCenterX > rightEdge) targetCamX = squareCenterX - viewWidth + CAMERA_MARGIN;
+                if (squareCenterY < topEdge) targetCamY = squareCenterY - CAMERA_MARGIN;
+                else if (squareCenterY > bottomEdge) targetCamY = squareCenterY - viewHeight + CAMERA_MARGIN;
+                if (targetCamX < 0) targetCamX = 0;
+                if (targetCamY < 0) targetCamY = 0;
+                if (targetCamX + viewWidth > worldWidth) targetCamX = worldWidth - viewWidth;
+                if (targetCamY + viewHeight > worldHeight) targetCamY = worldHeight - viewHeight;
+                cameraX += (targetCamX - cameraX) * 0.12;
+                cameraY += (targetCamY - cameraY) * 0.12;
+                cameraX = Math.max(0, Math.min(cameraX, worldWidth - viewWidth));
+                cameraY = Math.max(0, Math.min(cameraY, worldHeight - viewHeight));
+            }
+
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                let clientX, clientY;
+                if (e.touches) {
+                    if (e.touches.length === 0) return null;
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY
+                };
+            }
+
+            function screenToWorld(screenX, screenY) {
+                return {
+                    x: screenX + cameraX,
+                    y: screenY + cameraY
+                };
+            }
+
+            function setTarget(worldX, worldY) {
+                if (isPointInsideObstacle(worldX, worldY, BASE_SIZE/2)) {
+                    const safePoint = getClosestSafePointOnObstacle(worldX, worldY);
+                    targetWorldX = safePoint.x;
+                    targetWorldY = safePoint.y;
+                } else {
+                    targetWorldX = Math.max(BASE_SIZE/2, Math.min(worldX, worldWidth - BASE_SIZE/2));
+                    targetWorldY = Math.max(BASE_SIZE/2, Math.min(worldY, worldHeight - BASE_SIZE/2));
+                }
+
+                // تعیین شکل بر اساس خط عمودی فرضی که از مرکز مربع فعلی می‌گذرد
+                const squareCenterX = squareWorldX + BASE_SIZE / 2;
+                const squareCenterY = squareWorldY + BASE_SIZE / 2;
+                
+                const dx = targetWorldX - squareCenterX;
+                const dy = targetWorldY - squareCenterY;
+                
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    if (dx > 0) {
+                        currentShape = 'trapezoid'; // راست
+                    } else {
+                        currentShape = 'circle';    // چپ
+                    }
+                } else {
+                    if (dy < 0) {
+                        currentShape = 'triangle';  // بالا
+                    } else {
+                        currentShape = 'square';    // پایین
+                    }
+                }
+                
+                // ریست تایمر چشمک زدن
+                imageFlashTimer = 0;
+                currentFlashIndex = 0;
+
+                const centerX = squareWorldX + BASE_SIZE / 2;
+                const centerY = squareWorldY + BASE_SIZE / 2;
+                waypoints = calculatePathWithObstacleAvoidance(centerX, centerY, targetWorldX, targetWorldY);
+                hasTarget = true;
+                targetAlpha = TARGET_MAX_ALPHA;
+            }
+
+            function onPointerDown(e) {
+                e.preventDefault();
+                const coords = getCanvasCoords(e);
+                if (!coords) return;
+                const worldPos = screenToWorld(coords.x, coords.y);
+                setTarget(worldPos.x, worldPos.y);
+            }
+
+            function preventTouchDefaults(e) {
+                e.preventDefault();
+            }
+
+            // ==================== به‌روزرسانی ====================
+            function update() {
+                trailPositions.push({ x: squareWorldX, y: squareWorldY });
+                while (trailPositions.length > TRAIL_LENGTH) trailPositions.shift();
+
+                // به‌روزرسانی تایمر چشمک زدن تصویر
+                if (hasTarget) {
+                    imageFlashTimer++;
+                    if (imageFlashTimer >= FLASH_INTERVAL) {
+                        imageFlashTimer = 0;
+                        currentFlashIndex = (currentFlashIndex + 1) % 3; // 0, 1, 2
+                    }
+                } else {
+                    currentFlashIndex = 0;
+                    imageFlashTimer = 0;
+                }
+
+                if (hasTarget) {
+                    let currentTargetX = targetWorldX;
+                    let currentTargetY = targetWorldY;
+                    if (waypoints.length > 0) {
+                        currentTargetX = waypoints[0].x;
+                        currentTargetY = waypoints[0].y;
+                    }
+
+                    const centerX = squareWorldX + BASE_SIZE / 2;
+                    const centerY = squareWorldY + BASE_SIZE / 2;
+                    const dx = currentTargetX - centerX;
+                    const dy = currentTargetY - centerY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance <= ARRIVAL_THRESHOLD) {
+                        if (waypoints.length > 0) {
+                            waypoints.shift();
+                        } else {
+                            squareWorldX = targetWorldX - BASE_SIZE / 2;
+                            squareWorldY = targetWorldY - BASE_SIZE / 2;
+                            clampSquareToWorld();
+                            hasTarget = false;
+                        }
+                    } else {
+                        const step = Math.min(MOVE_SPEED, distance);
+                        const normX = dx / distance;
+                        const normY = dy / distance;
+
+                        let newX = squareWorldX + normX * step;
+                        let newY = squareWorldY + normY * step;
+
+                        if (isSquareCollidingWithObstacle(newX, newY, OBSTACLE_BUFFER)) {
+                            const obsDx = (newX + BASE_SIZE/2) - obstacleCenterX;
+                            const obsDy = (newY + BASE_SIZE/2) - obstacleCenterY;
+                            const obsDist = Math.sqrt(obsDx * obsDx + obsDy * obsDy);
+                            
+                            if (obsDist > 0.01) {
+                                const safeDist = OBSTACLE_RADIUS + OBSTACLE_BUFFER + BASE_SIZE/2;
+                                const pushX = obstacleCenterX + (obsDx / obsDist) * safeDist;
+                                const pushY = obstacleCenterY + (obsDy / obsDist) * safeDist;
+                                newX = pushX - BASE_SIZE/2;
+                                newY = pushY - BASE_SIZE/2;
+                            } else {
+                                newX = obstacleCenterX + OBSTACLE_RADIUS + OBSTACLE_BUFFER + 5;
+                                newY = obstacleCenterY;
+                            }
+                            
+                            const newCenterX = newX + BASE_SIZE/2;
+                            const newCenterY = newY + BASE_SIZE/2;
+                            waypoints = calculatePathWithObstacleAvoidance(newCenterX, newCenterY, targetWorldX, targetWorldY);
+                        }
+
+                        squareWorldX = newX;
+                        squareWorldY = newY;
+                        clampSquareToWorld();
+
+                        if (isSquareCollidingWithObstacle(squareWorldX, squareWorldY, 0)) {
+                            const safePoint = getClosestSafePointOnObstacle(
+                                squareWorldX + BASE_SIZE/2,
+                                squareWorldY + BASE_SIZE/2
+                            );
+                            squareWorldX = safePoint.x - BASE_SIZE/2;
+                            squareWorldY = safePoint.y - BASE_SIZE/2;
+                            clampSquareToWorld();
+                        }
+                    }
+                }
+
+                updateCamera();
+
+                if (!hasTarget && targetAlpha > 0) {
+                    targetAlpha = Math.max(0, targetAlpha - TARGET_FADE_SPEED);
+                } else if (hasTarget) {
+                    targetAlpha = TARGET_MAX_ALPHA;
+                }
+            }
+
+            // ==================== رسم تصاویر ====================
+            function drawImageShape(worldX, worldY, alpha = 1.0, scale = 1.0) {
+                const size = BASE_SIZE * scale;
+                const offset = (BASE_SIZE - size) / 2;
+                const x = worldX + offset;
+                const y = worldY + offset;
+
+                const img = getCurrentImage();
+                if (!img || !img.complete) return;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                
+                if (shouldFlipImage()) {
+                    // قرینه کردن تصویر نسبت به خط عمودی (محور x مرکز تصویر)
+                    ctx.translate(x + size / 2, y);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(img, -size / 2, 0, size, size);
+                } else {
+                    ctx.drawImage(img, x, y, size, size);
+                }
+                
+                ctx.restore();
+            }
+
+            // ==================== رسم صحنه ====================
+            function drawWorld() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#0f0f1f';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.save();
+                ctx.translate(-cameraX, -cameraY);
+
+                // شبکه
+                ctx.strokeStyle = 'rgba(180, 180, 255, 0.1)';
+                ctx.lineWidth = 0.8;
+                const gridStep = 110;
+                const startX = Math.floor(cameraX / gridStep) * gridStep;
+                const startY = Math.floor(cameraY / gridStep) * gridStep;
+                const endX = cameraX + canvas.width + gridStep;
+                const endY = cameraY + canvas.height + gridStep;
+                for (let x = startX; x <= endX; x += gridStep) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, startY);
+                    ctx.lineTo(x, endY);
+                    ctx.stroke();
+                }
+                for (let y = startY; y <= endY; y += gridStep) {
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y);
+                    ctx.lineTo(endX, y);
+                    ctx.stroke();
+                }
+
+                // نقاط ریز
+                ctx.fillStyle = 'rgba(200, 200, 255, 0.14)';
+                const dotStep = 45;
+                const dotStartX = Math.floor(cameraX / dotStep) * dotStep;
+                const dotStartY = Math.floor(cameraY / dotStep) * dotStep;
+                for (let x = dotStartX; x <= endX; x += dotStep) {
+                    for (let y = dotStartY; y <= endY; y += dotStep) {
+                        ctx.beginPath();
+                        ctx.arc(x, y, 1.3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                // مرزهای دنیا
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(0, 0, worldWidth, worldHeight);
+
+                // ---- رسم مانع ----
+                ctx.save();
+                const obstacleGrad = ctx.createRadialGradient(
+                    obstacleCenterX, obstacleCenterY, OBSTACLE_RADIUS * 0.7,
+                    obstacleCenterX, obstacleCenterY, OBSTACLE_RADIUS * 1.5
+                );
+                obstacleGrad.addColorStop(0, 'rgba(230, 57, 70, 0.7)');
+                obstacleGrad.addColorStop(0.6, 'rgba(230, 57, 70, 0.15)');
+                obstacleGrad.addColorStop(1, 'rgba(230, 57, 70, 0)');
+                ctx.fillStyle = obstacleGrad;
+                ctx.shadowColor = 'rgba(230, 57, 70, 0.7)';
+                ctx.shadowBlur = 30;
+                ctx.beginPath();
+                ctx.arc(obstacleCenterX, obstacleCenterY, OBSTACLE_RADIUS * 1.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.shadowBlur = 20;
+                ctx.fillStyle = '#e63946';
+                ctx.beginPath();
+                ctx.arc(obstacleCenterX, obstacleCenterY, OBSTACLE_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.shadowBlur = 8;
+                ctx.strokeStyle = '#ff6b6b';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+                ctx.lineWidth = 1;
+                for (let i = 1; i <= 3; i++) {
+                    ctx.beginPath();
+                    ctx.arc(obstacleCenterX, obstacleCenterY, OBSTACLE_RADIUS * (i * 0.22), 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // ---- نقاط مسیر ----
+                if (waypoints.length > 0 && hasTarget) {
+                    ctx.save();
+                    ctx.fillStyle = '#ff9f1c';
+                    ctx.shadowColor = 'rgba(255, 159, 28, 0.7)';
+                    ctx.shadowBlur = 12;
+                    for (const wp of waypoints) {
+                        ctx.beginPath();
+                        ctx.arc(wp.x, wp.y, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+
+                // ---- نشانگر هدف ----
+                if (targetAlpha > 0.01) {
+                    ctx.save();
+                    ctx.globalAlpha = targetAlpha;
+                    const grad = ctx.createRadialGradient(targetWorldX, targetWorldY, 3, targetWorldX, targetWorldY, 30);
+                    grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+                    grad.addColorStop(0.6, 'rgba(255,255,255,0.3)');
+                    grad.addColorStop(1, 'rgba(255,255,200,0)');
+                    ctx.fillStyle = grad;
+                    ctx.shadowColor = 'rgba(255, 255, 255, 0.95)';
+                    ctx.shadowBlur = 16;
+                    ctx.beginPath();
+                    ctx.arc(targetWorldX, targetWorldY, 24, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.shadowBlur = 12;
+                    ctx.beginPath();
+                    ctx.arc(targetWorldX, targetWorldY, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                // ---- دنباله ----
+                if (trailPositions.length > 1) {
+                    for (let i = 0; i < trailPositions.length; i++) {
+                        const pos = trailPositions[i];
+                        const progress = i / (trailPositions.length - 1 || 1);
+                        const alpha = 0.04 + progress * 0.2;
+                        const scale = 0.55 + progress * 0.45;
+                        drawImageShape(pos.x, pos.y, alpha, scale);
+                    }
+                }
+
+                // ---- تصویر اصلی ----
+                drawImageShape(squareWorldX, squareWorldY, 1.0, 1.0);
+
+                // خط چین به هدف
+                if (hasTarget && targetAlpha > 0.15) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.3;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.3;
+                    ctx.setLineDash([7, 9]);
+                    ctx.beginPath();
+                    ctx.moveTo(squareWorldX + BASE_SIZE/2, squareWorldY + BASE_SIZE/2);
+                    if (waypoints.length > 0) {
+                        ctx.lineTo(waypoints[0].x, waypoints[0].y);
+                    } else {
+                        ctx.lineTo(targetWorldX, targetWorldY);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                ctx.restore();
+            }
+
+            function drawMinimap() {
+                const mmX = canvas.width - MINIMAP_WIDTH - MINIMAP_PADDING;
+                const mmY = MINIMAP_PADDING;
+
+                ctx.save();
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 12;
+                ctx.fillStyle = 'rgba(10, 10, 22, 0.75)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.roundRect(mmX, mmY, MINIMAP_WIDTH, MINIMAP_HEIGHT, MINIMAP_BORDER_RADIUS);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+
+                const margin = 4;
+                const mapLeft = mmX + margin;
+                const mapTop = mmY + margin;
+                const mapWidth = MINIMAP_WIDTH - margin * 2;
+                const mapHeight = MINIMAP_HEIGHT - margin * 2;
+                const scaleX = mapWidth / worldWidth;
+                const scaleY = mapHeight / worldHeight;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.roundRect(mmX, mmY, MINIMAP_WIDTH, MINIMAP_HEIGHT, MINIMAP_BORDER_RADIUS);
+                ctx.clip();
+
+                ctx.fillStyle = 'rgba(25, 25, 45, 0.8)';
+                ctx.fillRect(mapLeft, mapTop, mapWidth, mapHeight);
+
+                const obsMiniX = mapLeft + obstacleCenterX * scaleX;
+                const obsMiniY = mapTop + obstacleCenterY * scaleY;
+                const obsMiniR = OBSTACLE_RADIUS * scaleX;
+                ctx.fillStyle = '#e63946';
+                ctx.beginPath();
+                ctx.arc(obsMiniX, obsMiniY, Math.max(obsMiniR, 3), 0, Math.PI*2);
+                ctx.fill();
+                ctx.strokeStyle = '#ff6b6b';
+                ctx.lineWidth = 0.8;
+                ctx.stroke();
+
+                ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                ctx.lineWidth = 0.3;
+                for (let wx = 0; wx <= worldWidth; wx += 200) {
+                    const sx = mapLeft + wx * scaleX;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, mapTop);
+                    ctx.lineTo(sx, mapTop + mapHeight);
+                    ctx.stroke();
+                }
+                for (let wy = 0; wy <= worldHeight; wy += 200) {
+                    const sy = mapTop + wy * scaleY;
+                    ctx.beginPath();
+                    ctx.moveTo(mapLeft, sy);
+                    ctx.lineTo(mapLeft + mapWidth, sy);
+                    ctx.stroke();
+                }
+
+                const viewLeft = mapLeft + cameraX * scaleX;
+                const viewTop = mapTop + cameraY * scaleY;
+                const viewW = canvas.width * scaleX;
+                const viewH = canvas.height * scaleY;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+                ctx.lineWidth = 1.8;
+                ctx.strokeRect(viewLeft, viewTop, viewW, viewH);
+
+                const shapeMiniX = mapLeft + squareWorldX * scaleX;
+                const shapeMiniY = mapTop + squareWorldY * scaleY;
+                const shapeMiniSize = Math.max(4, BASE_SIZE * scaleX);
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(shapeMiniX, shapeMiniY, shapeMiniSize, shapeMiniSize);
+
+                if (hasTarget || targetAlpha > 0.1) {
+                    const tMiniX = mapLeft + targetWorldX * scaleX;
+                    const tMiniY = mapTop + targetWorldY * scaleY;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(tMiniX, tMiniY, 2.4, 0, 2*Math.PI);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+
+                ctx.save();
+                ctx.font = '9px system-ui';
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.fillText('نقشه', mmX + 6, mmY + 14);
+                ctx.restore();
+            }
+
+            function animationLoop() {
+                update();
+                drawWorld();
+                drawMinimap();
+                requestAnimationFrame(animationLoop);
+            }
+
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                updateWorldSize();
+                clampSquareToWorld();
+                updateCamera();
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            canvas.addEventListener('mousedown', onPointerDown);
+            canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+            document.addEventListener('touchmove', preventTouchDefaults, { passive: false });
+            document.addEventListener('gesturestart', preventTouchDefaults);
+            document.addEventListener('gesturechange', preventTouchDefaults);
+            document.addEventListener('gestureend', preventTouchDefaults);
+
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            function init() {
+                resizeCanvas();
+                squareWorldX = obstacleCenterX + OBSTACLE_RADIUS + 60;
+                squareWorldY = obstacleCenterY - 100;
+                currentShape = 'square';
+                targetWorldX = squareWorldX + BASE_SIZE/2;
+                targetWorldY = squareWorldY + BASE_SIZE/2;
+                hasTarget = false;
+                targetAlpha = 0;
+                waypoints = [];
+                trailPositions.length = 0;
+                for (let i = 0; i < TRAIL_LENGTH; i++) {
+                    trailPositions.push({ x: squareWorldX, y: squareWorldY });
+                }
+                cameraX = squareWorldX + BASE_SIZE/2 - canvas.width/2;
+                cameraY = squareWorldY + BASE_SIZE/2 - canvas.height/2;
+                updateCamera();
+                animationLoop();
+            }
+
+            init();
+        })();
+    </script>
+</body>
+</html>
