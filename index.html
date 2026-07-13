@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>مربع متحرک | پس‌زمینه تمام‌صفحه</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #1a1a2e;
+            font-family: system-ui, sans-serif;
+        }
+
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, #16213e 0%, #0f0f1a 100%);
+        }
+
+        /* امضای کوچک و محو در گوشه */
+        .signature {
+            position: fixed;
+            bottom: 16px;
+            right: 20px;
+            color: rgba(255, 255, 255, 0.25);
+            font-size: 13px;
+            letter-spacing: 0.5px;
+            pointer-events: none;
+            z-index: 10;
+            backdrop-filter: blur(4px);
+            padding: 4px 12px;
+            border-radius: 20px;
+            background: rgba(0,0,0,0.2);
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="signature">✦ مربع سرگردان</div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // ---------- تنظیمات مربع ----------
+            const SQUARE_SIZE = 48;           // اندازه ضلع مربع (پیکسل)
+            const BASE_SPEED = 1.8;           // سرعت پایه حرکت
+            const COLOR = '#f0e68c';         // رنگ مربع (خاکی روشن / طلایی ملایم)
+            const GLOW_COLOR = 'rgba(240, 230, 140, 0.7)';
+            const TRAIL_LENGTH = 14;          // تعداد موقعیت‌های ذخیره شده برای دنباله
+
+            // متغیرهای موقعیت و سرعت
+            let x = 300;                      // موقعیت اولیه افقی (وقتی اندازه تنظیم نشده)
+            let y = 250;                      // موقعیت اولیه عمودی
+            let speedX = BASE_SPEED;
+            let speedY = BASE_SPEED * 0.9;    // کمی اختلاف برای زاویه زیباتر
+
+            // آرایه ذخیره موقعیت‌های قبلی برای افکت دنباله (tail)
+            const trailPositions = [];
+
+            // ---------- به‌روزرسانی ابعاد بوم ----------
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                // اگر مربع خارج از محدوده جدید افتاد، آن را به داخل برگردانیم
+                // (مثلاً وقتی پنجره کوچک می‌شود)
+                if (x > canvas.width - SQUARE_SIZE) {
+                    x = canvas.width - SQUARE_SIZE - 2;
+                }
+                if (y > canvas.height - SQUARE_SIZE) {
+                    y = canvas.height - SQUARE_SIZE - 2;
+                }
+                if (x < 0) x = 2;
+                if (y < 0) y = 2;
+
+                // پاک‌سازی trail هنگام تغییر اندازه برای جلوگیری از کشیدگی ناگهانی
+                trailPositions.length = 0;
+                // پر کردن trail با موقعیت فعلی برای شروع نرم
+                for (let i = 0; i < TRAIL_LENGTH; i++) {
+                    trailPositions.push({ x, y });
+                }
+            }
+
+            // ---------- به‌روزرسانی منطق حرکت ----------
+            function updatePosition() {
+                // افزودن موقعیت فعلی به انتهای آرایه trail
+                trailPositions.push({ x, y });
+
+                // اگر تعداد از حداکثر بیشتر شد، قدیمی‌ترین را حذف کن
+                while (trailPositions.length > TRAIL_LENGTH) {
+                    trailPositions.shift();
+                }
+
+                // جابجایی مربع
+                x += speedX;
+                y += speedY;
+
+                // بررسی برخورد با لبه‌ها و بازتاب
+                // لبه راست
+                if (x + SQUARE_SIZE >= canvas.width) {
+                    x = canvas.width - SQUARE_SIZE;
+                    speedX = -speedX;
+                }
+                // لبه چپ
+                if (x <= 0) {
+                    x = 0;
+                    speedX = -speedX;
+                }
+                // لبه پایین
+                if (y + SQUARE_SIZE >= canvas.height) {
+                    y = canvas.height - SQUARE_SIZE;
+                    speedY = -speedY;
+                }
+                // لبه بالا
+                if (y <= 0) {
+                    y = 0;
+                    speedY = -speedY;
+                }
+
+                // اطمینان از اینکه سرعت‌ها صفر نیستند (اگر به دلایلی صفر شدند دوباره تنظیم کن)
+                if (Math.abs(speedX) < 0.2) speedX = (speedX >= 0 ? 1 : -1) * BASE_SPEED;
+                if (Math.abs(speedY) < 0.2) speedY = (speedY >= 0 ? 1 : -1) * BASE_SPEED;
+            }
+
+            // ---------- رسم صحنه ----------
+            function drawScene() {
+                if (!ctx || canvas.width === 0 || canvas.height === 0) return;
+
+                // پاک کردن کل بوم
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // رسم پس‌زمینه نرم (gradient از قبل روی canvas با CSS هست،
+                // اما کمی ذرات ریز یا طرح ملایم می‌تواند تمیزتر باشد؛
+                // اینجا یک لایه توری یا خطوط محو اختیاریست اما طراحی تمیز را حفظ می‌کنیم.
+                // فقط یک لطافت کوچک اضافه کنیم: خطوط افقی محو برای حس عمق
+                ctx.save();
+                ctx.globalAlpha = 0.06;
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 0.6;
+                const step = 70;
+                for (let i = step; i < canvas.height; i += step) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, i);
+                    ctx.lineTo(canvas.width, i);
+                    ctx.stroke();
+                }
+                for (let j = step; j < canvas.width; j += step) {
+                    ctx.beginPath();
+                    ctx.moveTo(j, 0);
+                    ctx.lineTo(j, canvas.height);
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // ---------- رسم دنباله (tail) ----------
+                if (trailPositions.length > 1) {
+                    ctx.save();
+                    // برای هر نقطه در trail یک مربع نیمه‌شفاف رسم می‌کنیم
+                    // از قدیمی‌ترین به جدیدترین، با شفافیت افزایشی
+                    for (let i = 0; i < trailPositions.length; i++) {
+                        const pos = trailPositions[i];
+                        // میزان شفافیت: از 0 تا حدود 0.18 برای قدیمی‌ترین، تا 0.35 برای جدیدترین
+                        const progress = i / (trailPositions.length - 1 || 1);
+                        // alpha از 0.04 تا 0.28 (ملایم و ظریف)
+                        const alpha = 0.04 + progress * 0.24;
+                        
+                        // اندازه مربع trail کمی کوچکتر از مربع اصلی و تغییر اندازه ملایم
+                        const scale = 0.65 + progress * 0.35; // از 0.65 تا 1.0
+                        const trailSize = SQUARE_SIZE * scale;
+                        const offsetX = (SQUARE_SIZE - trailSize) / 2;
+                        const offsetY = (SQUARE_SIZE - trailSize) / 2;
+                        
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = COLOR;
+                        ctx.shadowColor = 'transparent'; // بدون سایه برای trail
+                        ctx.shadowBlur = 0;
+                        
+                        // رسم مربع trail با گوشه‌های گرد ملایم (اختیاری)
+                        ctx.beginPath();
+                        const drawX = pos.x + offsetX;
+                        const drawY = pos.y + offsetY;
+                        // کمی گردی گوشه‌ها (radius کوچک)
+                        const radius = Math.min(4, trailSize / 4);
+                        ctx.moveTo(drawX + radius, drawY);
+                        ctx.lineTo(drawX + trailSize - radius, drawY);
+                        ctx.quadraticCurveTo(drawX + trailSize, drawY, drawX + trailSize, drawY + radius);
+                        ctx.lineTo(drawX + trailSize, drawY + trailSize - radius);
+                        ctx.quadraticCurveTo(drawX + trailSize, drawY + trailSize, drawX + trailSize - radius, drawY + trailSize);
+                        ctx.lineTo(drawX + radius, drawY + trailSize);
+                        ctx.quadraticCurveTo(drawX, drawY + trailSize, drawX, drawY + trailSize - radius);
+                        ctx.lineTo(drawX, drawY + radius);
+                        ctx.quadraticCurveTo(drawX, drawY, drawX + radius, drawY);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                // ---------- رسم مربع اصلی ----------
+                ctx.save();
+                // فعال کردن سایه برای درخشش نرم
+                ctx.shadowColor = GLOW_COLOR;
+                ctx.shadowBlur = 18;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+                
+                ctx.fillStyle = COLOR;
+                
+                // رسم مربع با گوشه‌های کمی گرد (radius = 6px) برای لطافت بیشتر
+                const cornerRadius = 6;
+                ctx.beginPath();
+                ctx.moveTo(x + cornerRadius, y);
+                ctx.lineTo(x + SQUARE_SIZE - cornerRadius, y);
+                ctx.quadraticCurveTo(x + SQUARE_SIZE, y, x + SQUARE_SIZE, y + cornerRadius);
+                ctx.lineTo(x + SQUARE_SIZE, y + SQUARE_SIZE - cornerRadius);
+                ctx.quadraticCurveTo(x + SQUARE_SIZE, y + SQUARE_SIZE, x + SQUARE_SIZE - cornerRadius, y + SQUARE_SIZE);
+                ctx.lineTo(x + cornerRadius, y + SQUARE_SIZE);
+                ctx.quadraticCurveTo(x, y + SQUARE_SIZE, x, y + SQUARE_SIZE - cornerRadius);
+                ctx.lineTo(x, y + cornerRadius);
+                ctx.quadraticCurveTo(x, y, x + cornerRadius, y);
+                ctx.closePath();
+                ctx.fill();
+                
+                // یک لبه داخلی خیلی ظریف برای برجسته‌تر شدن
+                ctx.shadowColor = 'transparent'; // غیرفعال کردن سایه برای خط داخلی
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255, 255, 240, 0.5)';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+                
+                ctx.restore();
+
+                // یک نقطه نورانی کوچک در مرکز مربع (اختیاری، حس تمیزی)
+                ctx.save();
+                ctx.globalAlpha = 0.7;
+                ctx.fillStyle = '#ffffff';
+                ctx.shadowColor = 'rgba(255, 255, 200, 0.9)';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                ctx.arc(x + SQUARE_SIZE/2, y + SQUARE_SIZE/2, 3.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // ---------- حلقه انیمیشن ----------
+            function animationLoop() {
+                updatePosition();
+                drawScene();
+                requestAnimationFrame(animationLoop);
+            }
+
+            // ---------- مدیریت رویداد تغییر اندازه ----------
+            window.addEventListener('resize', () => {
+                resizeCanvas();
+            });
+
+            // راه‌اندازی اولیه
+            function init() {
+                resizeCanvas();
+                
+                // تنظیم موقعیت شروع تصادفی اما امن (داخل محدوده با حاشیه)
+                if (canvas.width > SQUARE_SIZE * 2) {
+                    x = Math.random() * (canvas.width - SQUARE_SIZE);
+                } else {
+                    x = 10;
+                }
+                if (canvas.height > SQUARE_SIZE * 2) {
+                    y = Math.random() * (canvas.height - SQUARE_SIZE);
+                } else {
+                    y = 10;
+                }
+                
+                // جهت اولیه تصادفی با حفظ اندازه سرعت
+                speedX = (Math.random() > 0.5 ? BASE_SPEED : -BASE_SPEED);
+                speedY = (Math.random() > 0.5 ? BASE_SPEED * 0.9 : -BASE_SPEED * 0.9);
+                
+                // پر کردن trail با موقعیت شروع
+                trailPositions.length = 0;
+                for (let i = 0; i < TRAIL_LENGTH; i++) {
+                    trailPositions.push({ x, y });
+                }
+                
+                // شروع انیمیشن
+                animationLoop();
+            }
+
+            // اجرا
+            init();
+
+            // محافظت در برابر خطاهای نادر canvas
+            window.addEventListener('error', (e) => {
+                console.warn('خطای بوم:', e);
+            });
+        })();
+    </script>
+</body>
+</html>
