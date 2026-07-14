@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>دنیای بزرگ · دریاچه · نوار ابزار</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #0a0a14;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: none;
+            cursor: crosshair;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .instruction {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            letter-spacing: 0.5px;
+            pointer-events: none;
+            z-index: 10;
+            backdrop-filter: blur(6px);
+            padding: 4px 16px;
+            border-radius: 20px;
+            background: rgba(15, 15, 30, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            text-align: center;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="instruction">🏞️ ▲بالا=مثلث | ■پایین=مربع | ●چپ=قرینه راست | ⏢راست=ذوزنقه | 🪓 نوار ابزار پایین</div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // ==================== ابعاد ====================
+            const WORLD_MULTIPLIER = 6;
+            let worldWidth = 2400;
+            let worldHeight = 1800;
+
+            const BASE_SIZE = 96;
+            const MOVE_SPEED = 2.67;
+            const ARRIVAL_THRESHOLD = 2.5;
+
+            let squareWorldX = 400;
+            let squareWorldY = 350;
+            let currentShape = 'square';
+
+            let imageFlashTimer = 0;
+            const FLASH_INTERVAL = 6;
+            let currentFlashIndex = 0;
+
+            let targetWorldX = 400;
+            let targetWorldY = 350;
+            let hasTarget = false;
+            let waypoints = [];
+            let targetAlpha = 0;
+            const TARGET_MAX_ALPHA = 0.95;
+            const TARGET_FADE_SPEED = 0.028;
+
+            const trailPositions = [];
+            const TRAIL_LENGTH = 12;
+
+            // ==================== دریاچه - بازنویسی کامل ====================
+            let lake = {
+                cx: 1200,
+                cy: 900,
+                r: 50, // شعاع اصلی دریاچه (کوچیکتر)
+                buffer: 12, // فاصله امن
+                safeR: 0, // شعاع امن = r + buffer + halfPenguin
+                
+                init() {
+                    this.cx = worldWidth / 2;
+                    this.cy = worldHeight / 2;
+                    this.safeR = this.r + this.buffer + BASE_SIZE / 2;
+                },
+                
+                update() {
+                    this.cx = worldWidth / 2;
+                    this.cy = worldHeight / 2;
+                    this.safeR = this.r + this.buffer + BASE_SIZE / 2;
+                },
+                
+                // فاصله نقطه از مرکز دریاچه
+                distToCenter(px, py) {
+                    const dx = px - this.cx;
+                    const dy = py - this.cy;
+                    return Math.sqrt(dx * dx + dy * dy);
+                },
+                
+                // آیا نقطه داخل دریاچهست؟
+                isInside(px, py, extraBuffer = 0) {
+                    return this.distToCenter(px, py) < this.r + extraBuffer;
+                },
+                
+                // آیا مربع با دریاچه برخورد داره؟
+                hitsSquare(sx, sy) {
+                    const half = BASE_SIZE / 2;
+                    const cx = sx + half;
+                    const cy = sy + half;
+                    
+                    // مرکز مربع
+                    if (this.distToCenter(cx, cy) < this.safeR) return true;
+                    
+                    // چهار گوشه
+                    const corners = [
+                        [sx, sy], [sx + BASE_SIZE, sy],
+                        [sx, sy + BASE_SIZE], [sx + BASE_SIZE, sy + BASE_SIZE]
+                    ];
+                    
+                    for (const [cx2, cy2] of corners) {
+                        if (this.distToCenter(cx2, cy2) < this.safeR) return true;
+                    }
+                    
+                    return false;
+                },
+                
+                // نزدیکترین نقطه امن روی لبه دریاچه
+                closestSafePoint(wx, wy) {
+                    const dx = wx - this.cx;
+                    const dy = wy - this.cy;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < 0.01) {
+                        const a = Math.random() * Math.PI * 2;
+                        return {
+                            x: this.cx + Math.cos(a) * this.safeR,
+                            y: this.cy + Math.sin(a) * this.safeR
+                        };
+                    }
+                    
+                    return {
+                        x: this.cx + (dx / dist) * this.safeR,
+                        y: this.cy + (dy / dist) * this.safeR
+                    };
+                },
+                
+                // هل دادن مربع به بیرون دریاچه
+                pushOut(sx, sy) {
+                    const cx = sx + BASE_SIZE / 2;
+                    const cy = sy + BASE_SIZE / 2;
+                    const safe = this.closestSafePoint(cx, cy);
+                    return {
+                        x: safe.x - BASE_SIZE / 2,
+                        y: safe.y - BASE_SIZE / 2
+                    };
+                }
+            };
+            
+            let lakeImage = null;
+            let lakeImageLoaded = false;
+            let backgroundImage = null;
+            let backgroundLoaded = false;
+
+            // ==================== نوار ابزار ====================
+            const TOOLBAR_SQUARE_SIZE = 44;
+            const TOOLBAR_PADDING = 8;
+            const TOOLBAR_Y_OFFSET = 16;
+            let toolbarSquares = [];
+            let selectedTool = -1;
+            let toolbarItems = [null, null, null, null];
+            
+            let choobImage = null;
+            let choobLoaded = false;
+            let mahiImage = null;
+            let mahiLoaded = false;
+            const WOOD_SIZE_RATIO = 0.5;
+
+            // ==================== نوار پرتاب و نخ ====================
+            let isCharging = false;
+            let chargePower = 0;
+            let chargeDirection = 1;
+            const CHARGE_SPEED = 1.6; // دوبرابر شد
+            let isReturning = false;
+            const RETURN_SPEED = 2.4; // دوبرابر شد
+            
+            let fishingLine = null;
+            const LINE_SPEED = 6;
+            const MAX_LINE_LENGTH = BASE_SIZE * 10;
+            const MIN_LINE_LENGTH = BASE_SIZE * 1;
+            const LINE_RETRACT_SPEED = 5;
+            
+            let fishTimer = 0;
+            let fishDelay = 0;
+            let showQuestionMark = false;
+            let questionMarkAlpha = 0;
+            let questionMarkPulse = 0;
+            
+            let caughtFish = null;
+            let hasFishInToolbar = false;
+            let fishToolbarSlot = -1;
+            
+            let showFishCard = false;
+            let fishCardData = null;
+            
+            const fishTypes = [
+                { name: 'قزل‌آلا', desc: 'ماهی رنگین‌کمانی آب‌های شیرین\nوزن: ۲-۵ کیلوگرم\nطول: ۳۰-۵۰ سانتی‌متر', color: '#FF6B6B' },
+                { name: 'کپور', desc: 'ماهی بزرگ و فلس‌دار\nوزن: ۳-۱۵ کیلوگرم\nطول: ۴۰-۸۰ سانتی‌متر', color: '#FFD93D' },
+                { name: 'سفید', desc: 'ماهی خوش‌خوراک شمال\nوزن: ۱-۳ کیلوگرم\nطول: ۲۵-۴۰ سانتی‌متر', color: '#C0C0C0' },
+                { name: 'ازون‌برون', desc: 'ماهی خاویاری ارزشمند\nوزن: ۱۵-۶۰ کیلوگرم\nطول: ۱-۲ متر', color: '#6BCB77' },
+                { name: 'سوف', desc: 'شکارچی تیزدندان\nوزن: ۱-۴ کیلوگرم\nطول: ۳۰-۵۰ سانتی‌متر', color: '#4D96FF' },
+            ];
+
+            // ==================== دوربین ====================
+            let cameraX = 0;
+            let cameraY = 0;
+            const CAMERA_MARGIN = 180;
+
+            // ==================== مینیمپ ====================
+            const MINIMAP_WIDTH = 155;
+            const MINIMAP_HEIGHT = 110;
+            const MINIMAP_PADDING = 16;
+            const MINIMAP_BORDER_RADIUS = 10;
+
+            // ==================== تصاویر ====================
+            const IMAGE_BASE_PATH = 'assets/images/';
+            
+            const IMAGES = {
+                triangle: IMAGE_BASE_PATH + 'pangghadamposht1.jpeg',
+                triangleFlash1: IMAGE_BASE_PATH + 'pangghadamposht2.jpeg',
+                triangleFlash2: IMAGE_BASE_PATH + 'pangghadamposht2.jpeg',
+                circle: IMAGE_BASE_PATH + 'pangghadamrast1.jpeg',
+                circleFlash1: IMAGE_BASE_PATH + 'pangghadamrast2.jpeg',
+                circleFlash2: IMAGE_BASE_PATH + 'pangghadamrast3.jpeg',
+                trapezoid: IMAGE_BASE_PATH + 'pangghadamrast1.jpeg',
+                trapezoidFlash1: IMAGE_BASE_PATH + 'pangghadamrast2.jpeg',
+                trapezoidFlash2: IMAGE_BASE_PATH + 'pangghadamrast3.jpeg',
+                square: IMAGE_BASE_PATH + 'pangghadamjolo1.jpeg',
+                squareFlash1: IMAGE_BASE_PATH + 'pangghadamjolo2.jpeg',
+                squareFlash2: IMAGE_BASE_PATH + 'pangghadamjolo2.jpeg',
+            };
+
+            const imageCache = {};
+            function loadImage(src) {
+                if (!imageCache[src]) {
+                    const img = new Image();
+                    img.src = src;
+                    imageCache[src] = img;
+                }
+                return imageCache[src];
+            }
+
+            function loadInitialImages() {
+                lakeImage = new Image();
+                lakeImage.onload = function() {
+                    lakeImageLoaded = true;
+                    lake.r = Math.max(lakeImage.width, lakeImage.height) / 4;
+                    lake.safeR = lake.r + lake.buffer + BASE_SIZE / 2;
+                };
+                lakeImage.src = IMAGE_BASE_PATH + 'daryache.jpeg';
+                
+                backgroundImage = new Image();
+                backgroundImage.onload = () => backgroundLoaded = true;
+                backgroundImage.src = IMAGE_BASE_PATH + 'paszamine.jpeg';
+                
+                choobImage = new Image();
+                choobImage.onload = () => choobLoaded = true;
+                choobImage.src = IMAGE_BASE_PATH + 'choob_jolo.jpeg';
+                
+                mahiImage = new Image();
+                mahiImage.onload = () => mahiLoaded = true;
+                mahiImage.src = IMAGE_BASE_PATH + 'mahi.jpeg';
+            }
+
+            function getCurrentImage() {
+                if (hasTarget && currentFlashIndex === 1) return getFlash1Image();
+                if (hasTarget && currentFlashIndex === 2) return getFlash2Image();
+                return getBaseImage();
+            }
+
+            function getBaseImage() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangle);
+                    case 'circle': return loadImage(IMAGES.circle);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoid);
+                    default: return loadImage(IMAGES.square);
+                }
+            }
+
+            function getFlash1Image() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangleFlash1);
+                    case 'circle': return loadImage(IMAGES.circleFlash1);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoidFlash1);
+                    default: return loadImage(IMAGES.squareFlash1);
+                }
+            }
+
+            function getFlash2Image() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangleFlash2);
+                    case 'circle': return loadImage(IMAGES.circleFlash2);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoidFlash2);
+                    default: return loadImage(IMAGES.squareFlash2);
+                }
+            }
+
+            function shouldFlipImage() {
+                if (currentShape === 'triangle' && hasTarget && currentFlashIndex === 2) return true;
+                if (currentShape === 'circle') return true;
+                return false;
+            }
+
+            function shouldFlipBottomHalf() {
+                return currentShape === 'square' && hasTarget && currentFlashIndex === 2;
+            }
+
+            function getWoodPosition() {
+                const woodSize = BASE_SIZE * WOOD_SIZE_RATIO;
+                const centerY = squareWorldY + BASE_SIZE / 2;
+                const woodX = shouldFlipImage() ? squareWorldX + BASE_SIZE - woodSize : squareWorldX;
+                return { x: woodX, y: centerY - woodSize / 2, size: woodSize };
+            }
+
+            function getPenguinAngle() {
+                switch (currentShape) {
+                    case 'triangle': return -Math.PI / 2;
+                    case 'square': return Math.PI / 2;
+                    case 'circle': return Math.PI;
+                    case 'trapezoid': return 0;
+                    default: return Math.PI / 2;
+                }
+            }
+
+            function isNearLakeAndFacing() {
+                const cx = squareWorldX + BASE_SIZE / 2;
+                const cy = squareWorldY + BASE_SIZE / 2;
+                const dist = lake.distToCenter(cx, cy);
+                if (dist > lake.safeR + BASE_SIZE) return false;
+                
+                const angle = getPenguinAngle();
+                const toLake = Math.atan2(lake.cy - cy, lake.cx - cx);
+                let diff = angle - toLake;
+                while (diff < -Math.PI) diff += 2 * Math.PI;
+                while (diff > Math.PI) diff -= 2 * Math.PI;
+                return Math.abs(diff) < Math.PI / 2.5;
+            }
+
+            function updateWorldSize() {
+                worldWidth = window.innerWidth * WORLD_MULTIPLIER;
+                worldHeight = window.innerHeight * WORLD_MULTIPLIER;
+                lake.update();
+            }
+
+            function clampSquareToWorld() {
+                squareWorldX = Math.max(0, Math.min(squareWorldX, worldWidth - BASE_SIZE));
+                squareWorldY = Math.max(0, Math.min(squareWorldY, worldHeight - BASE_SIZE));
+            }
+
+            function setTarget(worldX, worldY) {
+                // اگه داخل دریاچهست، ببر نزدیکترین نقطه امن
+                if (lake.isInside(worldX, worldY, lake.buffer)) {
+                    const safe = lake.closestSafePoint(worldX, worldY);
+                    targetWorldX = safe.x;
+                    targetWorldY = safe.y;
+                } else {
+                    targetWorldX = Math.max(BASE_SIZE/2, Math.min(worldX, worldWidth - BASE_SIZE/2));
+                    targetWorldY = Math.max(BASE_SIZE/2, Math.min(worldY, worldHeight - BASE_SIZE/2));
+                }
+
+                const cx = squareWorldX + BASE_SIZE / 2;
+                const cy = squareWorldY + BASE_SIZE / 2;
+                const dx = targetWorldX - cx;
+                const dy = targetWorldY - cy;
+                
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    currentShape = dx > 0 ? 'trapezoid' : 'circle';
+                } else {
+                    currentShape = dy < 0 ? 'triangle' : 'square';
+                }
+                
+                imageFlashTimer = 0;
+                currentFlashIndex = 0;
+                waypoints = [];
+                hasTarget = true;
+                targetAlpha = TARGET_MAX_ALPHA;
+                
+                if (fishingLine && fishingLine.isActive) {
+                    retractLine();
+                }
+            }
+
+            function updateCamera() {
+                const vw = canvas.width;
+                const vh = canvas.height;
+                const scx = squareWorldX + BASE_SIZE / 2;
+                const scy = squareWorldY + BASE_SIZE / 2;
+                
+                let tx = cameraX;
+                let ty = cameraY;
+                
+                if (scx < cameraX + CAMERA_MARGIN) tx = scx - CAMERA_MARGIN;
+                else if (scx > cameraX + vw - CAMERA_MARGIN) tx = scx - vw + CAMERA_MARGIN;
+                if (scy < cameraY + CAMERA_MARGIN) ty = scy - CAMERA_MARGIN;
+                else if (scy > cameraY + vh - CAMERA_MARGIN) ty = scy - vh + CAMERA_MARGIN;
+                
+                tx = Math.max(0, Math.min(tx, worldWidth - vw));
+                ty = Math.max(0, Math.min(ty, worldHeight - vh));
+                
+                cameraX += (tx - cameraX) * 0.12;
+                cameraY += (ty - cameraY) * 0.12;
+            }
+
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const sx = canvas.width / rect.width;
+                const sy = canvas.height / rect.height;
+                const cx = e.touches ? (e.touches[0]?.clientX ?? 0) : e.clientX;
+                const cy = e.touches ? (e.touches[0]?.clientY ?? 0) : e.clientY;
+                return { x: (cx - rect.left) * sx, y: (cy - rect.top) * sy };
+            }
+
+            function screenToWorld(sx, sy) {
+                return { x: sx + cameraX, y: sy + cameraY };
+            }
+
+            function isClickOnToolbar(sx, sy) {
+                const tw = 4 * (TOOLBAR_SQUARE_SIZE + TOOLBAR_PADDING) - TOOLBAR_PADDING;
+                const tx = (canvas.width - tw) / 2;
+                const ty = canvas.height - TOOLBAR_SQUARE_SIZE - TOOLBAR_Y_OFFSET;
+                
+                for (let i = 0; i < 4; i++) {
+                    const bx = tx + i * (TOOLBAR_SQUARE_SIZE + TOOLBAR_PADDING);
+                    if (sx >= bx && sx <= bx + TOOLBAR_SQUARE_SIZE && sy >= ty && sy <= ty + TOOLBAR_SQUARE_SIZE) return i;
+                }
+                return -1;
+            }
+
+            function isClickOnConfirm(sx, sy) {
+                if (!showFishCard) return false;
+                const cw = 280, ch = 350;
+                const cx = (canvas.width - cw) / 2;
+                const cy = (canvas.height - ch) / 2;
+                const bw = 120, bh = 40;
+                const bx = cx + (cw - bw) / 2;
+                const by = cy + ch - 70;
+                return sx >= bx && sx <= bx + bw && sy >= by && sy <= by + bh;
+            }
+
+            function startCharging() {
+                if (selectedTool !== 0 || hasTarget || !isNearLakeAndFacing()) return;
+                if (fishingLine && fishingLine.isActive) return;
+                
+                isCharging = true;
+                chargePower = 0;
+                chargeDirection = 1;
+                isReturning = false;
+                fishingLine = null;
+            }
+
+            function releaseLine() {
+                if (!isCharging && !isReturning) return;
+                if (chargePower <= 0) { isCharging = false; isReturning = false; return; }
+                
+                isCharging = false;
+                isReturning = false;
+                
+                // طول نخ بر اساس قدرت
+                const lineLength = MIN_LINE_LENGTH + (MAX_LINE_LENGTH - MIN_LINE_LENGTH) * (chargePower / 100);
+                
+                const wp = getWoodPosition();
+                const sx = wp.x + wp.size / 2;
+                const sy = wp.y + wp.size / 2;
+                const angle = getPenguinAngle();
+
+                     // محاسبه انتهای نخ - باید به دریاچه برسه
+                let endX = sx + Math.cos(angle) * lineLength;
+                let endY = sy + Math.sin(angle) * lineLength;
+                
+                // اگه انتهای نخ به دریاچه نمیرسه، کوتاهش کن
+                if (!lake.isInside(endX, endY, 2)) {
+                    let actualLen = lineLength;
+                    let found = false;
+                    for (let i = 10; i <= lineLength; i += 4) {
+                        const tx = sx + Math.cos(angle) * i;
+                        const ty = sy + Math.sin(angle) * i;
+                        if (lake.isInside(tx, ty, 2)) {
+                            actualLen = i;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        chargePower = 0;
+                        return; // نمیتونه به دریاچه برسه
+                    }
+                    endX = sx + Math.cos(angle) * actualLen;
+                    endY = sy + Math.sin(angle) * actualLen;
+                }
+                
+                fishingLine = {
+                    sx, sy,
+                    ex: sx, ey: sy,
+                    tex: endX, tey: endY,
+                    maxLen: lineLength,
+                    curLen: 0,
+                    angle,
+                    active: true,
+                    retracting: false
+                };
+                
+                chargePower = 0;
+                fishDelay = 5000 + Math.random() * 55000;
+                fishTimer = 0;
+                showQuestionMark = false;
+            }
+
+            function retractLine() {
+                if (!fishingLine || !fishingLine.active) return;
+                fishingLine.retracting = true;
+                
+                if (showQuestionMark) {
+                    caughtFish = {
+                        x: fishingLine.ex,
+                        y: fishingLine.ey,
+                        alpha: 1,
+                        phase: 'rising',
+                        timer: 0,
+                        fishData: fishTypes[Math.floor(Math.random() * fishTypes.length)]
+                    };
+                }
+                showQuestionMark = false;
+            }
+
+            function updateFishingLine() {
+                if (!fishingLine || !fishingLine.active) return;
+                
+                if (fishingLine.retracting) {
+                    const dx = fishingLine.sx - fishingLine.ex;
+                    const dy = fishingLine.sy - fishingLine.ey;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < 4) {
+                        fishingLine.active = false;
+                        fishingLine = null;
+                        if (caughtFish?.phase === 'rising') {
+                            caughtFish.phase = 'waiting';
+                            caughtFish.timer = 0;
+                            caughtFish.x = squareWorldX + BASE_SIZE / 2;
+                            caughtFish.y = squareWorldY - 20;
+                        }
+                        return;
+                    }
+                    
+                    fishingLine.ex += (dx / dist) * LINE_RETRACT_SPEED;
+                    fishingLine.ey += (dy / dist) * LINE_RETRACT_SPEED;
+                    if (caughtFish?.phase === 'rising') {
+                        caughtFish.x = fishingLine.ex;
+                        caughtFish.y = fishingLine.ey;
+                    }
+                    return;
+                }
+                
+                // کشیده شدن نخ
+                const dx = fishingLine.tex - fishingLine.ex;
+                const dy = fishingLine.tey - fishingLine.ey;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > 1) {
+                    const step = Math.min(LINE_SPEED, dist);
+                    fishingLine.ex += (dx / dist) * step;
+                    fishingLine.ey += (dy / dist) * step;
+                } else {
+                    // نخ کامله - شروع تایمر ماهی
+                    fishTimer += 16.67;
+                    if (fishTimer >= fishDelay) {
+                        showQuestionMark = true;
+                        questionMarkAlpha = 1;
+                    }
+                }
+            }
+
+            function updateCaughtFish() {
+                if (!caughtFish || caughtFish.phase !== 'waiting') return;
+                caughtFish.timer += 16.67;
+                if (caughtFish.timer >= 1000) {
+                    showFishCard = true;
+                    fishCardData = caughtFish.fishData;
+                    caughtFish = null;
+                }
+            }
+
+            function confirmFishCard() {
+                showFishCard = false;
+                for (let i = 0; i < 4; i++) {
+                    if (toolbarItems[i] === null) {
+                        toolbarItems[i] = 'fish';
+                        break;
+                    }
+                }
+                hasFishInToolbar = true;
+                fishCardData = null;
+            }
+
+            function onPointerDown(e) {
+                e.preventDefault();
+                const c = getCanvasCoords(e);
+                if (!c) return;
+                
+                if (showFishCard) {
+                    if (isClickOnConfirm(c.x, c.y)) confirmFishCard();
+                    return;
+                }
+                
+                const ti = isClickOnToolbar(c.x, c.y);
+                if (ti >= 0) {
+                    if (toolbarItems[ti] === 'fish') return;
+                    selectedTool = selectedTool === ti ? -1 : ti;
+                    return;
+                }
+                
+                if (showQuestionMark && fishingLine?.active) {
+                    retractLine();
+                    return;
+                }
+                
+                if (selectedTool === 0 && !hasTarget) {
+                    startCharging();
+                    if (isCharging) return;
+                }
+                
+                const wp = screenToWorld(c.x, c.y);
+                setTarget(wp.x, wp.y);
+            }
+
+            function onPointerUp() {
+                if (isCharging || isReturning) releaseLine();
+            }
+
+            function update() {
+                if (showFishCard) return;
+                
+                trailPositions.push({ x: squareWorldX, y: squareWorldY });
+                while (trailPositions.length > TRAIL_LENGTH) trailPositions.shift();
+
+                if (hasTarget) {
+                    imageFlashTimer++;
+                    if (imageFlashTimer >= FLASH_INTERVAL) {
+                        imageFlashTimer = 0;
+                        currentFlashIndex = (currentFlashIndex + 1) % 3;
+                    }
+                } else {
+                    currentFlashIndex = 0;
+                    imageFlashTimer = 0;
+                }
+
+                // نوار شارژ دوبرابر سریعتر
+                if (isCharging) {
+                    chargePower += CHARGE_SPEED * chargeDirection;
+                    if (chargePower >= 100) {
+                        chargePower = 100;
+                        chargeDirection = -1;
+                        isCharging = false;
+                        isReturning = true;
+                    }
+                }
+                if (isReturning) {
+                    chargePower -= RETURN_SPEED;
+                    if (chargePower <= 0) {
+                        chargePower = 0;
+                        isReturning = false;
+                    }
+                }
+                
+                updateFishingLine();
+                updateCaughtFish();
+                if (showQuestionMark) {
+                    questionMarkPulse += 0.05;
+                    questionMarkAlpha = 0.7 + Math.sin(questionMarkPulse) * 0.3;
+                }
+
+                if (hasTarget) {
+                    let cwx = targetWorldX;
+                    let cwy = targetWorldY;
+                    
+                    const scx = squareWorldX + BASE_SIZE / 2;
+                    const scy = squareWorldY + BASE_SIZE / 2;
+                    const dx = cwx - scx;
+                    const dy = cwy - scy;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist <= ARRIVAL_THRESHOLD) {
+                        squareWorldX = targetWorldX - BASE_SIZE / 2;
+                        squareWorldY = targetWorldY - BASE_SIZE / 2;
+                        clampSquareToWorld();
+                        hasTarget = false;
+                    } else {
+                        const step = Math.min(MOVE_SPEED, dist);
+                        let nx = squareWorldX + (dx / dist) * step;
+                        let ny = squareWorldY + (dy / dist) * step;
+                        
+                        // برخورد با دریاچه
+                        if (lake.hitsSquare(nx, ny)) {
+                            const pushed = lake.pushOut(nx, ny);
+                            nx = pushed.x;
+                            ny = pushed.y;
+                        }
+                        
+                        squareWorldX = nx;
+                        squareWorldY = ny;
+                        clampSquareToWorld();
+                        
+                        // اطمینان نهایی
+                        if (lake.hitsSquare(squareWorldX, squareWorldY)) {
+                            const pushed = lake.pushOut(squareWorldX, squareWorldY);
+                            squareWorldX = pushed.x;
+                            squareWorldY = pushed.y;
+                            clampSquareToWorld();
+                        }
+                    }
+                }
+
+                updateCamera();
+
+                if (!hasTarget && targetAlpha > 0) targetAlpha = Math.max(0, targetAlpha - TARGET_FADE_SPEED);
+                else if (hasTarget) targetAlpha = TARGET_MAX_ALPHA;
+            }
+
+            // ==================== رسم ====================
+            function drawImageShape(wx, wy, alpha = 1, scale = 1) {
+                const size = BASE_SIZE * scale;
+                const off = (BASE_SIZE - size) / 2;
+                const x = wx + off, y = wy + off;
+                const img = getCurrentImage();
+                if (!img?.complete) return;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                
+                if (shouldFlipImage()) {
+                    ctx.translate(x + size / 2, y);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(img, -size / 2, 0, size, size);
+                } else if (shouldFlipBottomHalf()) {
+                    ctx.drawImage(img, 0, 0, img.width, img.height/2, x, y, size, size/2);
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(x, y + size/2, size, size/2);
+                    ctx.clip();
+                    ctx.translate(x + size/2, y + size/2);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(img, 0, img.height/2, img.width, img.height/2, -size/2, 0, size, size/2);
+                    ctx.restore();
+                } else {
+                    ctx.drawImage(img, x, y, size, size);
+                }
+                ctx.restore();
+            }
+
+            function drawWood() {
+                if (selectedTool !== 0 || !choobLoaded) return;
+                const wp = getWoodPosition();
+                ctx.save();
+                ctx.drawImage(choobImage, wp.x, wp.y, wp.size, wp.size);
+                ctx.restore();
+            }
+
+            function drawFishingLine() {
+                if (!fishingLine?.active) return;
+                ctx.save();
+                ctx.strokeStyle = '#8B7355';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(fishingLine.sx, fishingLine.sy);
+                ctx.lineTo(fishingLine.ex, fishingLine.ey);
+                ctx.stroke();
+                ctx.fillStyle = '#C0C0C0';
+                ctx.beginPath();
+                ctx.arc(fishingLine.ex, fishingLine.ey, 3, 0, Math.PI*2);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            function drawQuestionMark() {
+                if (!showQuestionMark || !fishingLine?.active) return;
+                const wp = getWoodPosition();
+                const x = wp.x + wp.size/2, y = wp.y - 25;
+                ctx.save();
+                ctx.globalAlpha = questionMarkAlpha;
+                ctx.fillStyle = '#FFD700';
+                ctx.shadowColor = 'rgba(255,215,0,0.8)';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(x, y, 12, 0, Math.PI*2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 16px system-ui';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('؟', x, y+1);
+                ctx.restore();
+            }
+
+            function drawCaughtFish() {
+                if (!caughtFish || !mahiLoaded) return;
+                ctx.save();
+                ctx.globalAlpha = caughtFish.alpha;
+                ctx.drawImage(mahiImage, caughtFish.x - 15, caughtFish.y - 15, 30, 30);
+                ctx.restore();
+            }
+
+            function drawChargeBar() {
+                if ((!isCharging && !isReturning) || selectedTool !== 0 || hasTarget) return;
+                const cx = squareWorldX + BASE_SIZE/2;
+                const cy = squareWorldY - 30;
+                const bw = 80, bh = 8;
+                const bx = cx - bw/2, by = cy - bh/2;
+                
+                ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(bx-2, by-2, bw+4, bh+4, 6);
+                ctx.fill();
+                ctx.stroke();
+                
+                const pct = chargePower / 100;
+                const col = pct < 0.5 ? `rgb(255,${Math.floor(255*pct*2)},0)` : `rgb(${Math.floor(255*(1-(pct-0.5)*2))},255,0)`;
+                
+                ctx.fillStyle = col;
+                ctx.shadowColor = col;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.roundRect(bx, by, (chargePower/100)*bw, bh, 4);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 10px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText(Math.floor(chargePower)+'%', cx, by-8);
+            }
+
+            function drawFishCard() {
+                if (!showFishCard || !fishCardData || !mahiLoaded) return;
+                
+                ctx.fillStyle = 'rgba(0,0,0,0.75)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                const cw = 280, ch = 350;
+                const cx = (canvas.width-cw)/2, cy = (canvas.height-ch)/2;
+                
+                ctx.fillStyle = '#1a1a2e';
+                ctx.strokeStyle = fishCardData.color;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = fishCardData.color;
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.roundRect(cx, cy, cw, ch, 15);
+                ctx.fill();
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                
+                ctx.fillStyle = fishCardData.color;
+                ctx.font = 'bold 22px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('🎣 ماهی گرفتی!', cx+cw/2, cy+40);
+                
+                ctx.drawImage(mahiImage, cx+(cw-100)/2, cy+60, 100, 100);
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px system-ui';
+                ctx.fillText(fishCardData.name, cx+cw/2, cy+185);
+                
+                ctx.fillStyle = '#ccc';
+                ctx.font = '13px system-ui';
+                fishCardData.desc.split('\n').forEach((l, i) => ctx.fillText(l, cx+cw/2, cy+215+i*22));
+                
+                const bw = 120, bh = 40;
+                const bx = cx+(cw-bw)/2, by = cy+ch-70;
+                ctx.fillStyle = fishCardData.color;
+                ctx.beginPath();
+                ctx.roundRect(bx, by, bw, bh, 10);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 16px system-ui';
+                ctx.fillText('👍 تایید', bx+bw/2, by+bh/2+5);
+            }
+
+            function drawToolbar() {
+                const tw = 4*(TOOLBAR_SQUARE_SIZE+TOOLBAR_PADDING)-TOOLBAR_PADDING;
+                const tx = (canvas.width-tw)/2;
+                const ty = canvas.height-TOOLBAR_SQUARE_SIZE-TOOLBAR_Y_OFFSET;
+                
+                toolbarSquares = [];
+                for (let i=0; i<4; i++) toolbarSquares.push({x:tx+i*(TOOLBAR_SQUARE_SIZE+TOOLBAR_PADDING), y:ty, s:TOOLBAR_SQUARE_SIZE});
+                
+                ctx.save();
+                ctx.fillStyle = 'rgba(10,10,25,0.8)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.roundRect(tx-TOOLBAR_PADDING, ty-TOOLBAR_PADDING, tw+TOOLBAR_PADDING*2, TOOLBAR_SQUARE_SIZE+TOOLBAR_PADDING*2, 10);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+                
+                toolbarSquares.forEach((sq, i) => {
+                    ctx.save();
+                    ctx.fillStyle = selectedTool===i ? 'rgba(34,197,94,0.3)' : 'rgba(30,30,50,0.6)';
+                    ctx.strokeStyle = selectedTool===i ? '#22c55e' : 'rgba(255,255,255,0.4)';
+                    ctx.lineWidth = selectedTool===i ? 3 : 1.5;
+                    if (selectedTool===i) { ctx.shadowColor='rgba(34,197,94,0.6)'; ctx.shadowBlur=8; }
+                    ctx.beginPath();
+                    ctx.roundRect(sq.x, sq.y, sq.s, sq.s, 6);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                    
+                    if (i===0 && choobLoaded) ctx.drawImage(choobImage, sq.x+6, sq.y+6, sq.s-12, sq.s-12);
+                    if (toolbarItems[i]==='fish' && mahiLoaded) ctx.drawImage(mahiImage, sq.x+6, sq.y+6, sq.s-12, sq.s-12);
+                });
+            }
+
+            function drawWorld() {
+                ctx.clearRect(0,0,canvas.width,canvas.height);
+                
+                if (backgroundLoaded) ctx.drawImage(backgroundImage,0,0,canvas.width,canvas.height);
+                else { ctx.fillStyle='#0f0f1f'; ctx.fillRect(0,0,canvas.width,canvas.height); }
+
+                ctx.save();
+                ctx.translate(-cameraX, -cameraY);
+
+                // شبکه
+                ctx.strokeStyle = 'rgba(180,180,255,0.06)';
+                ctx.lineWidth = 0.8;
+                for (let x=Math.floor(cameraX/110)*110; x<=cameraX+canvas.width+110; x+=110) {
+                    ctx.beginPath(); ctx.moveTo(x, cameraY); ctx.lineTo(x, cameraY+canvas.height+110); ctx.stroke();
+                }
+                for (let y=Math.floor(cameraY/110)*110; y<=cameraY+canvas.height+110; y+=110) {
+                    ctx.beginPath(); ctx.moveTo(cameraX, y); ctx.lineTo(cameraX+canvas.width+110, y); ctx.stroke();
+                }
+                
+                ctx.fillStyle = 'rgba(200,200,255,0.08)';
+                for (let x=Math.floor(cameraX/45)*45; x<=cameraX+canvas.width+45; x+=45)
+                    for (let y=Math.floor(cameraY/45)*45; y<=cameraY+canvas.height+45; y+=45)
+                        { ctx.beginPath(); ctx.arc(x,y,1.3,0,Math.PI*2); ctx.fill(); }
+
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(0,0,worldWidth,worldHeight);
+
+                // دریاچه
+                if (lakeImageLoaded) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(lake.cx, lake.cy, lake.r, 0, Math.PI*2);
+                    ctx.clip();
+                    ctx.drawImage(lakeImage, lake.cx-lake.r, lake.cy-lake.r, lake.r*2, lake.r*2);
+                    ctx.restore();
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(100,180,255,0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(lake.cx, lake.cy, lake.r, 0, Math.PI*2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                // هدف
+                if (targetAlpha > 0.01) {
+                    ctx.save();
+                    ctx.globalAlpha = targetAlpha;
+                    const g = ctx.createRadialGradient(targetWorldX, targetWorldY, 3, targetWorldX, targetWorldY, 30);
+                    g.addColorStop(0,'rgba(255,255,255,0.95)'); g.addColorStop(0.6,'rgba(255,255,255,0.3)'); g.addColorStop(1,'rgba(255,255,200,0)');
+                    ctx.fillStyle = g;
+                    ctx.beginPath(); ctx.arc(targetWorldX, targetWorldY, 24, 0, Math.PI*2); ctx.fill();
+                    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(targetWorldX, targetWorldY, 5, 0, Math.PI*2); ctx.fill();
+                    ctx.restore();
+                }
+
+                // دنباله
+                if (trailPositions.length > 1) {
+                    trailPositions.forEach((p, i) => {
+                        const pr = i/(trailPositions.length-1||1);
+                        drawImageShape(p.x, p.y, 0.04+pr*0.2, 0.55+pr*0.45);
+                    });
+                }
+
+                drawImageShape(squareWorldX, squareWorldY);
+                drawWood();
+                drawFishingLine();
+                drawCaughtFish();
+                drawQuestionMark();
+                drawChargeBar();
+
+                ctx.restore();
+                drawToolbar();
+                drawFishCard();
+            }
+
+            function drawMinimap() {
+                const mx = canvas.width-MINIMAP_WIDTH-MINIMAP_PADDING;
+                const my = MINIMAP_PADDING;
+                
+                ctx.save();
+                ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=12;
+                ctx.fillStyle='rgba(10,10,22,0.75)'; ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=1.8;
+                ctx.beginPath(); ctx.roundRect(mx,my,MINIMAP_WIDTH,MINIMAP_HEIGHT,MINIMAP_BORDER_RADIUS); ctx.fill(); ctx.stroke();
+                ctx.restore();
+                
+                const ml=mx+4, mt=my+4, mw=MINIMAP_WIDTH-8, mh=MINIMAP_HEIGHT-8;
+                const sx=mw/worldWidth, sy=mh/worldHeight;
+                
+                ctx.save();
+                ctx.beginPath(); ctx.roundRect(mx,my,MINIMAP_WIDTH,MINIMAP_HEIGHT,MINIMAP_BORDER_RADIUS); ctx.clip();
+                ctx.fillStyle='rgba(25,25,45,0.8)'; ctx.fillRect(ml,mt,mw,mh);
+                
+                ctx.fillStyle='rgba(30,100,200,0.6)';
+                ctx.beginPath(); ctx.arc(ml+lake.cx*sx, mt+lake.cy*sy, Math.max(lake.r*sx,3), 0, Math.PI*2); ctx.fill();
+                
+                ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=1.8;
+                ctx.strokeRect(ml+cameraX*sx, mt+cameraY*sy, canvas.width*sx, canvas.height*sy);
+                
+                ctx.fillStyle='#fff';
+                ctx.fillRect(ml+squareWorldX*sx, mt+squareWorldY*sy, Math.max(4,BASE_SIZE*sx), Math.max(4,BASE_SIZE*sx));
+                ctx.restore();
+                
+                ctx.fillStyle='rgba(255,255,255,0.5)'; ctx.font='9px system-ui'; ctx.fillText('نقشه', mx+6, my+14);
+            }
+
+            function animationLoop() {
+                update();
+                drawWorld();
+                drawMinimap();
+                requestAnimationFrame(animationLoop);
+            }
+
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                updateWorldSize();
+                clampSquareToWorld();
+                updateCamera();
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            canvas.addEventListener('mousedown', onPointerDown);
+            canvas.addEventListener('mouseup', onPointerUp);
+            canvas.addEventListener('mouseleave', onPointerUp);
+            canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+            canvas.addEventListener('touchend', onPointerUp);
+            document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            function init() {
+                resizeCanvas();
+                loadInitialImages();
+                toolbarItems = [null, null, null, null];
+                squareWorldX = lake.cx + lake.safeR + 20;
+                squareWorldY = lake.cy - 60;
+                currentShape = 'square';
+                targetWorldX = squareWorldX + BASE_SIZE/2;
+                targetWorldY = squareWorldY + BASE_SIZE/2;
+                hasTarget = false;
+                targetAlpha = 0;
+                waypoints = [];
+                trailPositions.length = 0;
+                for (let i=0; i<TRAIL_LENGTH; i++) trailPositions.push({ x: squareWorldX, y: squareWorldY });
+                cameraX = squareWorldX + BASE_SIZE/2 - canvas.width/2;
+                cameraY = squareWorldY + BASE_SIZE/2 - canvas.height/2;
+                updateCamera();
+                animationLoop();
+            }
+
+            init();
+        })();
+    </script>
+</body>
+</html>
