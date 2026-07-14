@@ -1,0 +1,1435 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>دنیای بزرگ · دریاچه · نوار ابزار</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #0a0a14;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            touch-action: none;
+            cursor: crosshair;
+        }
+        canvas {
+            display: block;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .instruction {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            letter-spacing: 0.5px;
+            pointer-events: none;
+            z-index: 10;
+            backdrop-filter: blur(6px);
+            padding: 4px 16px;
+            border-radius: 20px;
+            background: rgba(15, 15, 30, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            text-align: center;
+            user-select: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div class="instruction">🏞️ ▲بالا=مثلث | ■پایین=مربع | ●چپ=قرینه راست | ⏢راست=ذوزنقه | 🪓 نوار ابزار پایین</div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // ==================== ابعاد دنیا ====================
+            const WORLD_MULTIPLIER = 6;
+            let worldWidth = 2400;
+            let worldHeight = 1800;
+
+            // ==================== تنظیمات شکل ====================
+            const BASE_SIZE = 96;
+            const MOVE_SPEED = 2.67;
+            const ARRIVAL_THRESHOLD = 2.5;
+
+            let squareWorldX = 400;
+            let squareWorldY = 350;
+
+            let currentShape = 'square';
+
+            let imageFlashTimer = 0;
+            const FLASH_INTERVAL = 6;
+            let currentFlashIndex = 0;
+
+            let targetWorldX = 400;
+            let targetWorldY = 350;
+            let hasTarget = false;
+
+            let waypoints = [];
+
+            let targetAlpha = 0;
+            const TARGET_MAX_ALPHA = 0.95;
+            const TARGET_FADE_SPEED = 0.028;
+
+            const trailPositions = [];
+            const TRAIL_LENGTH = 12;
+
+            // ==================== دریاچه ====================
+            let lakeCenterX = 1200;
+            let lakeCenterY = 900;
+            let LAKE_RADIUS = 80;
+            const LAKE_BUFFER = 15;
+            
+            let lakeImage = null;
+            let lakeImageLoaded = false;
+            
+            let backgroundImage = null;
+            let backgroundLoaded = false;
+
+            // ==================== نوار ابزار ====================
+            const TOOLBAR_SQUARE_SIZE = 44;
+            const TOOLBAR_PADDING = 8;
+            const TOOLBAR_Y_OFFSET = 16;
+            let toolbarSquares = [];
+            let selectedTool = -1;
+            let toolbarItems = [null, null, null, null];
+            
+            let choobImage = null;
+            let choobLoaded = false;
+            let mahiImage = null;
+            let mahiLoaded = false;
+            const WOOD_SIZE_RATIO = 0.5;
+
+            // ==================== نوار پرتاب و نخ ====================
+            let isCharging = false;
+            let chargePower = 0;
+            let chargeDirection = 1;
+            const CHARGE_SPEED = 0.8;
+            let isReturning = false;
+            const RETURN_SPEED = 1.2;
+            
+            let fishingLine = null;
+            const LINE_SPEED = 6;
+            const MAX_LINE_LENGTH = BASE_SIZE * 10;
+            const MIN_LINE_LENGTH = BASE_SIZE * 1;
+            const LINE_RETRACT_SPEED = 4;
+            
+            let fishTimer = 0;
+            let fishDelay = 0;
+            let showQuestionMark = false;
+            let questionMarkAlpha = 0;
+            let questionMarkPulse = 0;
+            
+            let caughtFish = null;
+            let hasFishInToolbar = false;
+            let fishToolbarSlot = -1;
+            
+            // ==================== صفحه نمایش ماهی ====================
+            let showFishCard = false;
+            let fishCardData = null;
+            
+            // لیست ماهی‌ها
+            const fishTypes = [
+                { name: 'قزل‌آلا', desc: 'ماهی رنگین‌کمانی آب‌های شیرین\nوزن: ۲-۵ کیلوگرم\nطول: ۳۰-۵۰ سانتی‌متر', color: '#FF6B6B' },
+                { name: 'کپور', desc: 'ماهی بزرگ و فلس‌دار\nوزن: ۳-۱۵ کیلوگرم\nطول: ۴۰-۸۰ سانتی‌متر', color: '#FFD93D' },
+                { name: 'سفید', desc: 'ماهی خوش‌خوراک شمال\nوزن: ۱-۳ کیلوگرم\nطول: ۲۵-۴۰ سانتی‌متر', color: '#C0C0C0' },
+                { name: 'ازون‌برون', desc: 'ماهی خاویاری ارزشمند\nوزن: ۱۵-۶۰ کیلوگرم\nطول: ۱-۲ متر', color: '#6BCB77' },
+                { name: 'سوف', desc: 'شکارچی تیزدندان\nوزن: ۱-۴ کیلوگرم\nطول: ۳۰-۵۰ سانتی‌متر', color: '#4D96FF' },
+            ];
+
+            let mouseWorldX = 0;
+            let mouseWorldY = 0;
+
+            // ==================== دوربین ====================
+            let cameraX = 0;
+            let cameraY = 0;
+            const CAMERA_MARGIN = 180;
+
+            // ==================== مینیمپ ====================
+            const MINIMAP_WIDTH = 155;
+            const MINIMAP_HEIGHT = 110;
+            const MINIMAP_PADDING = 16;
+            const MINIMAP_BORDER_RADIUS = 10;
+
+            // ==================== تصاویر ====================
+            const IMAGE_BASE_PATH = 'assets/images/';
+            
+            const IMAGES = {
+                triangle: IMAGE_BASE_PATH + 'pangghadamposht1.jpeg',
+                triangleFlash1: IMAGE_BASE_PATH + 'pangghadamposht2.jpeg',
+                triangleFlash2: IMAGE_BASE_PATH + 'pangghadamposht2.jpeg',
+                circle: IMAGE_BASE_PATH + 'pangghadamrast1.jpeg',
+                circleFlash1: IMAGE_BASE_PATH + 'pangghadamrast2.jpeg',
+                circleFlash2: IMAGE_BASE_PATH + 'pangghadamrast3.jpeg',
+                trapezoid: IMAGE_BASE_PATH + 'pangghadamrast1.jpeg',
+                trapezoidFlash1: IMAGE_BASE_PATH + 'pangghadamrast2.jpeg',
+                trapezoidFlash2: IMAGE_BASE_PATH + 'pangghadamrast3.jpeg',
+                square: IMAGE_BASE_PATH + 'pangghadamjolo1.jpeg',
+                squareFlash1: IMAGE_BASE_PATH + 'pangghadamjolo2.jpeg',
+                squareFlash2: IMAGE_BASE_PATH + 'pangghadamjolo2.jpeg',
+            };
+
+            const imageCache = {};
+            function loadImage(src) {
+                if (!imageCache[src]) {
+                    const img = new Image();
+                    img.src = src;
+                    imageCache[src] = img;
+                }
+                return imageCache[src];
+            }
+
+            function loadInitialImages() {
+                lakeImage = new Image();
+                lakeImage.onload = function() {
+                    lakeImageLoaded = true;
+                    const maxDim = Math.max(lakeImage.width, lakeImage.height);
+                    LAKE_RADIUS = maxDim / 3;
+                };
+                lakeImage.src = IMAGE_BASE_PATH + 'daryache.jpeg';
+                
+                backgroundImage = new Image();
+                backgroundImage.onload = function() {
+                    backgroundLoaded = true;
+                };
+                backgroundImage.src = IMAGE_BASE_PATH + 'paszamine.jpeg';
+                
+                choobImage = new Image();
+                choobImage.onload = function() {
+                    choobLoaded = true;
+                };
+                choobImage.src = IMAGE_BASE_PATH + 'choob_jolo.jpeg';
+                
+                mahiImage = new Image();
+                mahiImage.onload = function() {
+                    mahiLoaded = true;
+                };
+                mahiImage.src = IMAGE_BASE_PATH + 'mahi.jpeg';
+            }
+
+            function getCurrentImage() {
+                if (hasTarget && currentFlashIndex === 1) return getFlash1Image();
+                else if (hasTarget && currentFlashIndex === 2) return getFlash2Image();
+                return getBaseImage();
+            }
+
+            function getBaseImage() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangle);
+                    case 'circle': return loadImage(IMAGES.circle);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoid);
+                    default: return loadImage(IMAGES.square);
+                }
+            }
+
+            function getFlash1Image() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangleFlash1);
+                    case 'circle': return loadImage(IMAGES.circleFlash1);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoidFlash1);
+                    default: return loadImage(IMAGES.squareFlash1);
+                }
+            }
+
+            function getFlash2Image() {
+                switch (currentShape) {
+                    case 'triangle': return loadImage(IMAGES.triangleFlash2);
+                    case 'circle': return loadImage(IMAGES.circleFlash2);
+                    case 'trapezoid': return loadImage(IMAGES.trapezoidFlash2);
+                    default: return loadImage(IMAGES.squareFlash2);
+                }
+            }
+
+            function shouldFlipImage() {
+                if (currentShape === 'triangle' && hasTarget && currentFlashIndex === 2) return true;
+                if (currentShape === 'circle') return true;
+                return false;
+            }
+
+            function shouldFlipBottomHalf() {
+                if (currentShape === 'square' && hasTarget && currentFlashIndex === 2) return true;
+                return false;
+            }
+
+            function getWoodPosition() {
+                const centerX = squareWorldX + BASE_SIZE / 2;
+                const centerY = squareWorldY + BASE_SIZE / 2;
+                const woodSize = BASE_SIZE * WOOD_SIZE_RATIO;
+                
+                let woodX;
+                if (shouldFlipImage()) {
+                    woodX = squareWorldX + BASE_SIZE - woodSize;
+                } else {
+                    woodX = squareWorldX;
+                }
+                
+                const woodY = centerY - woodSize / 2;
+                return { x: woodX, y: woodY, size: woodSize };
+            }
+
+            function getPenguinAngle() {
+                switch (currentShape) {
+                    case 'triangle': return -Math.PI / 2;
+                    case 'square': return Math.PI / 2;
+                    case 'circle': return Math.PI;
+                    case 'trapezoid': return 0;
+                    default: return Math.PI / 2;
+                }
+            }
+
+            function isNearLake() {
+                const centerX = squareWorldX + BASE_SIZE / 2;
+                const centerY = squareWorldY + BASE_SIZE / 2;
+                const dx = centerX - lakeCenterX;
+                const dy = centerY - lakeCenterY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                return dist < LAKE_RADIUS + LAKE_BUFFER + BASE_SIZE;
+            }
+
+            function isFacingLake() {
+                const angle = getPenguinAngle();
+                const centerX = squareWorldX + BASE_SIZE / 2;
+                const centerY = squareWorldY + BASE_SIZE / 2;
+                const dx = lakeCenterX - centerX;
+                const dy = lakeCenterY - centerY;
+                const angleToLake = Math.atan2(dy, dx);
+                
+                let diff = angle - angleToLake;
+                while (diff < -Math.PI) diff += 2 * Math.PI;
+                while (diff > Math.PI) diff -= 2 * Math.PI;
+                
+                return Math.abs(diff) < Math.PI / 3;
+            }
+
+            function updateWorldSize() {
+                worldWidth = window.innerWidth * WORLD_MULTIPLIER;
+                worldHeight = window.innerHeight * WORLD_MULTIPLIER;
+                lakeCenterX = worldWidth / 2;
+                lakeCenterY = worldHeight / 2;
+            }
+
+            function clampSquareToWorld() {
+                if (squareWorldX < 0) squareWorldX = 0;
+                if (squareWorldY < 0) squareWorldY = 0;
+                if (squareWorldX + BASE_SIZE > worldWidth) squareWorldX = worldWidth - BASE_SIZE;
+                if (squareWorldY + BASE_SIZE > worldHeight) squareWorldY = worldHeight - BASE_SIZE;
+            }
+
+            function isPointInsideLake(px, py, buffer = 0) {
+                const dx = px - lakeCenterX;
+                const dy = py - lakeCenterY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                return dist < LAKE_RADIUS + buffer;
+            }
+
+            function isSquareCollidingWithLake(sx, sy, buffer = 0) {
+                const corners = [
+                    { x: sx, y: sy },
+                    { x: sx + BASE_SIZE, y: sy },
+                    { x: sx, y: sy + BASE_SIZE },
+                    { x: sx + BASE_SIZE, y: sy + BASE_SIZE }
+                ];
+                for (const corner of corners) {
+                    if (isPointInsideLake(corner.x, corner.y, buffer)) return true;
+                }
+                const centerX = sx + BASE_SIZE / 2;
+                const centerY = sy + BASE_SIZE / 2;
+                if (isPointInsideLake(centerX, centerY, buffer)) return true;
+                return false;
+            }
+
+            function getClosestSafePointOnLake(worldX, worldY) {
+                const dx = worldX - lakeCenterX;
+                const dy = worldY - lakeCenterY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 0.01) {
+                    const angle = Math.random() * Math.PI * 2;
+                    return {
+                        x: lakeCenterX + Math.cos(angle) * (LAKE_RADIUS + LAKE_BUFFER + BASE_SIZE/2),
+                        y: lakeCenterY + Math.sin(angle) * (LAKE_RADIUS + LAKE_BUFFER + BASE_SIZE/2)
+                    };
+                }
+                const safeDist = LAKE_RADIUS + LAKE_BUFFER + BASE_SIZE / 2;
+                const normX = dx / dist;
+                const normY = dy / dist;
+                return {
+                    x: lakeCenterX + normX * safeDist,
+                    y: lakeCenterY + normY * safeDist
+                };
+            }
+
+            function doesLineIntersectLake(x1, y1, x2, y2) {
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const fx = x1 - lakeCenterX;
+                const fy = y1 - lakeCenterY;
+                const a = dx * dx + dy * dy;
+                const b = 2 * (fx * dx + fy * dy);
+                const c = fx * fx + fy * fy - (LAKE_RADIUS + LAKE_BUFFER + BASE_SIZE/2) ** 2;
+                let discriminant = b * b - 4 * a * c;
+                if (discriminant < 0) return false;
+                discriminant = Math.sqrt(discriminant);
+                const t1 = (-b - discriminant) / (2 * a);
+                const t2 = (-b + discriminant) / (2 * a);
+                if (t1 >= 0 && t1 <= 1) return true;
+                if (t2 >= 0 && t2 <= 1) return true;
+                return false;
+            }
+
+            function calculatePathWithLakeAvoidance(fromX, fromY, toX, toY) {
+                const path = [];
+                if (!doesLineIntersectLake(fromX, fromY, toX, toY)) return path;
+                const fromSafe = getClosestSafePointOnLake(fromX, fromY);
+                const toSafe = getClosestSafePointOnLake(toX, toY);
+                const angleFrom = Math.atan2(fromSafe.y - lakeCenterY, fromSafe.x - lakeCenterX);
+                const angleTo = Math.atan2(toSafe.y - lakeCenterY, toSafe.x - lakeCenterX);
+                let angleDiff = angleTo - angleFrom;
+                while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+                while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+                const safeRadius = LAKE_RADIUS + LAKE_BUFFER + BASE_SIZE / 2;
+                const midAngle = angleFrom + angleDiff / 2;
+                const midPoint = {
+                    x: lakeCenterX + Math.cos(midAngle) * safeRadius * 1.4,
+                    y: lakeCenterY + Math.sin(midAngle) * safeRadius * 1.4
+                };
+                midPoint.x = Math.max(BASE_SIZE, Math.min(worldWidth - BASE_SIZE, midPoint.x));
+                midPoint.y = Math.max(BASE_SIZE, Math.min(worldHeight - BASE_SIZE, midPoint.y));
+                path.push(midPoint);
+                return path;
+            }
+
+            function updateCamera() {
+                const viewWidth = canvas.width;
+                const viewHeight = canvas.height;
+                const squareCenterX = squareWorldX + BASE_SIZE / 2;
+                const squareCenterY = squareWorldY + BASE_SIZE / 2;
+                let targetCamX = cameraX;
+                let targetCamY = cameraY;
+                const leftEdge = cameraX + CAMERA_MARGIN;
+                const rightEdge = cameraX + viewWidth - CAMERA_MARGIN;
+                const topEdge = cameraY + CAMERA_MARGIN;
+                const bottomEdge = cameraY + viewHeight - CAMERA_MARGIN;
+                if (squareCenterX < leftEdge) targetCamX = squareCenterX - CAMERA_MARGIN;
+                else if (squareCenterX > rightEdge) targetCamX = squareCenterX - viewWidth + CAMERA_MARGIN;
+                if (squareCenterY < topEdge) targetCamY = squareCenterY - CAMERA_MARGIN;
+                else if (squareCenterY > bottomEdge) targetCamY = squareCenterY - viewHeight + CAMERA_MARGIN;
+                if (targetCamX < 0) targetCamX = 0;
+                if (targetCamY < 0) targetCamY = 0;
+                if (targetCamX + viewWidth > worldWidth) targetCamX = worldWidth - viewWidth;
+                if (targetCamY + viewHeight > worldHeight) targetCamY = worldHeight - viewHeight;
+                cameraX += (targetCamX - cameraX) * 0.12;
+                cameraY += (targetCamY - cameraY) * 0.12;
+                cameraX = Math.max(0, Math.min(cameraX, worldWidth - viewWidth));
+                cameraY = Math.max(0, Math.min(cameraY, worldHeight - viewHeight));
+            }
+
+            function getCanvasCoords(e) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                let clientX, clientY;
+                if (e.touches) {
+                    if (e.touches.length === 0) return null;
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                return {
+                    x: (clientX - rect.left) * scaleX,
+                    y: (clientY - rect.top) * scaleY
+                };
+            }
+
+            function screenToWorld(screenX, screenY) {
+                return {
+                    x: screenX + cameraX,
+                    y: screenY + cameraY
+                };
+            }
+
+            function isClickOnToolbar(screenX, screenY) {
+                const totalWidth = 4 * (TOOLBAR_SQUARE_SIZE + TOOLBAR_PADDING) - TOOLBAR_PADDING;
+                const startX = (canvas.width - totalWidth) / 2;
+                const startY = canvas.height - TOOLBAR_SQUARE_SIZE - TOOLBAR_Y_OFFSET;
+                
+                for (let i = 0; i < 4; i++) {
+                    const sx = startX + i * (TOOLBAR_SQUARE_SIZE + TOOLBAR_PADDING);
+                    const sy = startY;
+                    if (screenX >= sx && screenX <= sx + TOOLBAR_SQUARE_SIZE &&
+                        screenY >= sy && screenY <= sy + TOOLBAR_SQUARE_SIZE) {
+                        return i;
+                    }
+                }
+                return -1;
+            }
+
+            function isClickOnConfirmButton(screenX, screenY) {
+                if (!showFishCard) return false;
+                
+                const cardWidth = 280;
+                const cardHeight = 350;
+                const cardX = (canvas.width - cardWidth) / 2;
+                const cardY = (canvas.height - cardHeight) / 2;
+                
+                const btnWidth = 120;
+                const btnHeight = 40;
+                const btnX = cardX + (cardWidth - btnWidth) / 2;
+                const btnY = cardY + cardHeight - 70;
+                
+                return screenX >= btnX && screenX <= btnX + btnWidth &&
+                       screenY >= btnY && screenY <= btnY + btnHeight;
+            }
+
+            function setTarget(worldX, worldY) {
+                if (isPointInsideLake(worldX, worldY, LAKE_BUFFER)) {
+                    const safePoint = getClosestSafePointOnLake(worldX, worldY);
+                    targetWorldX = safePoint.x;
+                    targetWorldY = safePoint.y;
+                } else {
+                    targetWorldX = Math.max(BASE_SIZE/2, Math.min(worldX, worldWidth - BASE_SIZE/2));
+                    targetWorldY = Math.max(BASE_SIZE/2, Math.min(worldY, worldHeight - BASE_SIZE/2));
+                }
+
+                const squareCenterX = squareWorldX + BASE_SIZE / 2;
+                const squareCenterY = squareWorldY + BASE_SIZE / 2;
+                const dx = targetWorldX - squareCenterX;
+                const dy = targetWorldY - squareCenterY;
+                
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    if (dx > 0) currentShape = 'trapezoid';
+                    else currentShape = 'circle';
+                } else {
+                    if (dy < 0) currentShape = 'triangle';
+                    else currentShape = 'square';
+                }
+                
+                imageFlashTimer = 0;
+                currentFlashIndex = 0;
+                waypoints = calculatePathWithLakeAvoidance(squareCenterX, squareCenterY, targetWorldX, targetWorldY);
+                hasTarget = true;
+                targetAlpha = TARGET_MAX_ALPHA;
+                
+                if (fishingLine && fishingLine.isActive && fishingLine.inLake) {
+                    retractLine();
+                }
+            }
+
+            function startCharging(screenX, screenY) {
+                if (selectedTool !== 0) return;
+                if (hasTarget) return;
+                if (!isNearLake() || !isFacingLake()) return;
+                if (fishingLine && fishingLine.isActive && fishingLine.inLake) return;
+                
+                isCharging = true;
+                chargePower = 0;
+                chargeDirection = 1;
+                isReturning = false;
+                
+                if (!fishingLine || !fishingLine.isActive) {
+                    fishingLine = null;
+                }
+            }
+
+            function releaseLine() {
+                if (!isCharging && !isReturning) return;
+                if (chargePower <= 0) {
+                    isCharging = false;
+                    isReturning = false;
+                    return;
+                }
+                
+                isCharging = false;
+                isReturning = false;
+                
+                const percent = chargePower / 100;
+                const lineLength = MIN_LINE_LENGTH + (MAX_LINE_LENGTH - MIN_LINE_LENGTH) * percent;
+                
+                const woodPos = getWoodPosition();
+                const startX = woodPos.x + woodPos.size / 2;
+                const startY = woodPos.y + woodPos.size / 2;
+                
+                const angle = getPenguinAngle();
+                
+                let endX = startX + Math.cos(angle) * lineLength;
+                let endY = startY + Math.sin(angle) * lineLength;
+                
+                if (!isPointInsideLake(endX, endY, 0)) {
+                    let actualLength = lineLength;
+                    for (let i = 1; i <= lineLength; i += 2) {
+                        const tx = startX + Math.cos(angle) * i;
+                        const ty = startY + Math.sin(angle) * i;
+                        if (isPointInsideLake(tx, ty, 0)) {
+                            actualLength = i;
+                            break;
+                        }
+                    }
+                    endX = startX + Math.cos(angle) * actualLength;
+                    endY = startY + Math.sin(angle) * actualLength;
+                }
+                
+                fishingLine = {
+                    startX: startX,
+                    startY: startY,
+                    endX: startX,
+                    endY: startY,
+                    targetEndX: endX,
+                    targetEndY: endY,
+                    maxLength: lineLength,
+                    currentLength: 0,
+                    angle: angle,
+                    isActive: true,
+                    inLake: true,
+                    retracting: false
+                };
+                
+                chargePower = 0;
+                
+                fishDelay = 5000 + Math.random() * 55000;
+                fishTimer = 0;
+                showQuestionMark = false;
+            }
+
+            function retractLine() {
+                if (!fishingLine || !fishingLine.isActive) return;
+                fishingLine.retracting = true;
+                
+                if (showQuestionMark) {
+                    const randomFish = fishTypes[Math.floor(Math.random() * fishTypes.length)];
+                    caughtFish = {
+                        x: fishingLine.endX,
+                        y: fishingLine.endY,
+                        alpha: 1,
+                        phase: 'rising',
+                        timer: 0,
+                        fishData: randomFish
+                    };
+                }
+                
+                showQuestionMark = false;
+            }
+
+            function updateFishingLine() {
+                if (!fishingLine || !fishingLine.isActive) return;
+                
+                if (fishingLine.retracting) {
+                    const dx = fishingLine.startX - fishingLine.endX;
+                    const dy = fishingLine.startY - fishingLine.endY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < 3) {
+                        fishingLine.isActive = false;
+                        fishingLine = null;
+                        showQuestionMark = false;
+                        
+                        if (caughtFish && caughtFish.phase === 'rising') {
+                            caughtFish.phase = 'waiting';
+                            caughtFish.timer = 0;
+                            caughtFish.x = squareWorldX + BASE_SIZE / 2;
+                            caughtFish.y = squareWorldY - 20;
+                        }
+                        return;
+                    }
+                    
+                    fishingLine.endX += (dx / dist) * LINE_RETRACT_SPEED;
+                    fishingLine.endY += (dy / dist) * LINE_RETRACT_SPEED;
+                    fishingLine.currentLength = dist;
+                    
+                    if (caughtFish && caughtFish.phase === 'rising') {
+                        caughtFish.x = fishingLine.endX;
+                        caughtFish.y = fishingLine.endY;
+                    }
+                    return;
+                }
+                
+                const dx = fishingLine.targetEndX - fishingLine.endX;
+                const dy = fishingLine.targetEndY - fishingLine.endY;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > 1) {
+                    const step = Math.min(LINE_SPEED, dist);
+                    fishingLine.endX += (dx / dist) * step;
+                    fishingLine.endY += (dy / dist) * step;
+                    fishingLine.currentLength = Math.sqrt(
+                        (fishingLine.endX - fishingLine.startX) ** 2 + 
+                        (fishingLine.endY - fishingLine.startY) ** 2
+                    );
+                } else if (fishingLine.inLake && !showQuestionMark) {
+                    fishTimer += 16.67;
+                    if (fishTimer >= fishDelay) {
+                        showQuestionMark = true;
+                        questionMarkAlpha = 1;
+                    }
+                }
+            }
+
+            function updateCaughtFish() {
+                if (!caughtFish) return;
+                
+                if (caughtFish.phase === 'waiting') {
+                    caughtFish.timer += 16.67;
+                    if (caughtFish.timer >= 1000) {
+                        // نمایش کارت ماهی
+                        showFishCard = true;
+                        fishCardData = caughtFish.fishData;
+                        caughtFish = null;
+                    }
+                }
+            }
+
+            function updateQuestionMark() {
+                if (!showQuestionMark) return;
+                questionMarkPulse += 0.05;
+                questionMarkAlpha = 0.7 + Math.sin(questionMarkPulse) * 0.3;
+            }
+
+            function confirmFishCard() {
+                showFishCard = false;
+                
+                // اضافه کردن ماهی به نوار ابزار
+                fishToolbarSlot = -1;
+                for (let i = 0; i < 4; i++) {
+                    if (toolbarItems[i] === null) {
+                        fishToolbarSlot = i;
+                        toolbarItems[i] = 'fish';
+                        break;
+                    }
+                }
+                
+                hasFishInToolbar = true;
+                fishCardData = null;
+            }
+
+            function onPointerDown(e) {
+                e.preventDefault();
+                const coords = getCanvasCoords(e);
+                if (!coords) return;
+                
+                // اگر کارت ماهی نمایش داده شده
+                if (showFishCard) {
+                    if (isClickOnConfirmButton(coords.x, coords.y)) {
+                        confirmFishCard();
+                    }
+                    return;
+                }
+                
+                const toolIndex = isClickOnToolbar(coords.x, coords.y);
+                if (toolIndex >= 0) {
+                    if (toolbarItems[toolIndex] === 'fish') {
+                        // ماهی فقط کلکسیونه، نمی‌تونی باهاش ماهیگیری کنی
+                        return;
+                    }
+                    
+                    if (selectedTool === toolIndex) {
+                        selectedTool = -1;
+                    } else {
+                        selectedTool = toolIndex;
+                    }
+                    return;
+                }
+                
+                if (showQuestionMark && fishingLine && fishingLine.isActive) {
+                    retractLine();
+                    return;
+                }
+                
+                if (selectedTool === 0 && !hasTarget) {
+                    startCharging(coords.x, coords.y);
+                    if (isCharging) return;
+                }
+                
+                const worldPos = screenToWorld(coords.x, coords.y);
+                setTarget(worldPos.x, worldPos.y);
+            }
+
+            function onPointerUp(e) {
+                if (isCharging || isReturning) {
+                    releaseLine();
+                }
+            }
+
+            function preventTouchDefaults(e) {
+                e.preventDefault();
+            }
+
+            function update() {
+                if (showFishCard) return;
+                
+                trailPositions.push({ x: squareWorldX, y: squareWorldY });
+                while (trailPositions.length > TRAIL_LENGTH) trailPositions.shift();
+
+                if (hasTarget) {
+                    imageFlashTimer++;
+                    if (imageFlashTimer >= FLASH_INTERVAL) {
+                        imageFlashTimer = 0;
+                        currentFlashIndex = (currentFlashIndex + 1) % 3;
+                    }
+                } else {
+                    currentFlashIndex = 0;
+                    imageFlashTimer = 0;
+                }
+
+                if (isCharging) {
+                    chargePower += CHARGE_SPEED * chargeDirection;
+                    if (chargePower >= 100) {
+                        chargePower = 100;
+                        chargeDirection = -1;
+                        isCharging = false;
+                        isReturning = true;
+                    }
+                }
+                
+                if (isReturning) {
+                    chargePower -= RETURN_SPEED;
+                    if (chargePower <= 0) {
+                        chargePower = 0;
+                        isReturning = false;
+                    }
+                }
+                
+                updateFishingLine();
+                updateCaughtFish();
+                updateQuestionMark();
+
+                if (hasTarget) {
+                    let currentTargetX = targetWorldX;
+                    let currentTargetY = targetWorldY;
+                    if (waypoints.length > 0) {
+                        currentTargetX = waypoints[0].x;
+                        currentTargetY = waypoints[0].y;
+                    }
+
+                    const centerX = squareWorldX + BASE_SIZE / 2;
+                    const centerY = squareWorldY + BASE_SIZE / 2;
+                    const dx = currentTargetX - centerX;
+                    const dy = currentTargetY - centerY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance <= ARRIVAL_THRESHOLD) {
+                        if (waypoints.length > 0) {
+                            waypoints.shift();
+                        } else {
+                            squareWorldX = targetWorldX - BASE_SIZE / 2;
+                            squareWorldY = targetWorldY - BASE_SIZE / 2;
+                            clampSquareToWorld();
+                            hasTarget = false;
+                        }
+                    } else {
+                        const step = Math.min(MOVE_SPEED, distance);
+                        const normX = dx / distance;
+                        const normY = dy / distance;
+                        let newX = squareWorldX + normX * step;
+                        let newY = squareWorldY + normY * step;
+
+                        if (isSquareCollidingWithLake(newX, newY, LAKE_BUFFER)) {
+                            const obsDx = (newX + BASE_SIZE/2) - lakeCenterX;
+                            const obsDy = (newY + BASE_SIZE/2) - lakeCenterY;
+                            const obsDist = Math.sqrt(obsDx * obsDx + obsDy * obsDy);
+                            if (obsDist > 0.01) {
+                                const safeDist = LAKE_RADIUS + LAKE_BUFFER + BASE_SIZE/2;
+                                newX = lakeCenterX + (obsDx / obsDist) * safeDist - BASE_SIZE/2;
+                                newY = lakeCenterY + (obsDy / obsDist) * safeDist - BASE_SIZE/2;
+                            } else {
+                                newX = lakeCenterX + LAKE_RADIUS + LAKE_BUFFER + 5;
+                                newY = lakeCenterY;
+                            }
+                            waypoints = calculatePathWithLakeAvoidance(newX + BASE_SIZE/2, newY + BASE_SIZE/2, targetWorldX, targetWorldY);
+                        }
+
+                        squareWorldX = newX;
+                        squareWorldY = newY;
+                        clampSquareToWorld();
+
+                        if (isSquareCollidingWithLake(squareWorldX, squareWorldY, 0)) {
+                            const safePoint = getClosestSafePointOnLake(squareWorldX + BASE_SIZE/2, squareWorldY + BASE_SIZE/2);
+                            squareWorldX = safePoint.x - BASE_SIZE/2;
+                            squareWorldY = safePoint.y - BASE_SIZE/2;
+                            clampSquareToWorld();
+                        }
+                    }
+                }
+
+                updateCamera();
+
+                if (!hasTarget && targetAlpha > 0) {
+                    targetAlpha = Math.max(0, targetAlpha - TARGET_FADE_SPEED);
+                } else if (hasTarget) {
+                    targetAlpha = TARGET_MAX_ALPHA;
+                }
+            }
+
+            function drawImageShape(worldX, worldY, alpha = 1.0, scale = 1.0) {
+                const size = BASE_SIZE * scale;
+                const offset = (BASE_SIZE - size) / 2;
+                const x = worldX + offset;
+                const y = worldY + offset;
+                const img = getCurrentImage();
+                if (!img || !img.complete) return;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                
+                if (shouldFlipImage()) {
+                    ctx.translate(x + size / 2, y);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(img, -size / 2, 0, size, size);
+                } else if (shouldFlipBottomHalf()) {
+                    ctx.drawImage(img, 0, 0, img.width, img.height / 2, x, y, size, size / 2);
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.rect(x, y + size / 2, size, size / 2);
+                    ctx.clip();
+                    ctx.translate(x + size / 2, y + size / 2);
+                    ctx.scale(-1, 1);
+                    ctx.drawImage(img, 0, img.height / 2, img.width, img.height / 2, -size / 2, 0, size, size / 2);
+                    ctx.restore();
+                } else {
+                    ctx.drawImage(img, x, y, size, size);
+                }
+                ctx.restore();
+            }
+
+            function drawWoodOnPenguin() {
+                if (selectedTool !== 0 || !choobLoaded || !choobImage.complete) return;
+                
+                const woodPos = getWoodPosition();
+                ctx.save();
+                ctx.drawImage(choobImage, woodPos.x, woodPos.y, woodPos.size, woodPos.size);
+                ctx.restore();
+            }
+
+            function drawQuestionMark() {
+                if (!showQuestionMark || !fishingLine || !fishingLine.isActive) return;
+                
+                const woodPos = getWoodPosition();
+                const x = woodPos.x + woodPos.size / 2;
+                const y = woodPos.y - 25;
+                
+                ctx.save();
+                ctx.globalAlpha = questionMarkAlpha;
+                
+                ctx.fillStyle = '#FFD700';
+                ctx.shadowColor = 'rgba(255, 215, 0, 0.8)';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(x, y, 12, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                
+                ctx.fillStyle = '#000000';
+                ctx.font = 'bold 16px system-ui';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('؟', x, y + 1);
+                
+                ctx.restore();
+            }
+
+            function drawCaughtFish() {
+                if (!caughtFish || !mahiLoaded || !mahiImage.complete) return;
+                
+                const fishSize = 30;
+                
+                ctx.save();
+                ctx.globalAlpha = caughtFish.alpha;
+                ctx.drawImage(mahiImage, caughtFish.x - fishSize/2, caughtFish.y - fishSize/2, fishSize, fishSize);
+                ctx.restore();
+            }
+
+            function drawFishingLine() {
+                if (!fishingLine || !fishingLine.isActive) return;
+                
+                ctx.save();
+                
+                ctx.strokeStyle = '#8B7355';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(fishingLine.startX, fishingLine.startY);
+                ctx.lineTo(fishingLine.endX, fishingLine.endY);
+                ctx.stroke();
+                
+                ctx.fillStyle = '#C0C0C0';
+                ctx.beginPath();
+                ctx.arc(fishingLine.endX, fishingLine.endY, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#8B7355';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                
+                ctx.restore();
+            }
+
+            function drawChargeBar() {
+                if (!isCharging && !isReturning) return;
+                if (selectedTool !== 0 || hasTarget) return;
+                
+                const centerX = squareWorldX + BASE_SIZE / 2;
+                const centerY = squareWorldY - 30;
+                
+                const barWidth = 80;
+                const barHeight = 8;
+                const barX = centerX - barWidth / 2;
+                const barY = centerY - barHeight / 2;
+                
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4, 6);
+                ctx.fill();
+                ctx.stroke();
+                
+                const percent = chargePower / 100;
+                let barColor;
+                if (percent < 0.5) {
+                    const t = percent * 2;
+                    barColor = `rgb(${Math.floor(255)}, ${Math.floor(255 * t)}, 0)`;
+                } else {
+                    const t = (percent - 0.5) * 2;
+                    barColor = `rgb(${Math.floor(255 * (1 - t))}, ${Math.floor(255)}, 0)`;
+                }
+                
+                const fillWidth = (chargePower / 100) * barWidth;
+                ctx.fillStyle = barColor;
+                ctx.shadowColor = barColor;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.roundRect(barX, barY, fillWidth, barHeight, 4);
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 10px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText(Math.floor(chargePower) + '%', centerX, barY - 8);
+            }
+
+            function drawFishCard() {
+                if (!showFishCard || !fishCardData || !mahiLoaded || !mahiImage.complete) return;
+                
+                // overlay
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                const cardWidth = 280;
+                const cardHeight = 350;
+                const cardX = (canvas.width - cardWidth) / 2;
+                const cardY = (canvas.height - cardHeight) / 2;
+                
+                // کارت
+                ctx.fillStyle = '#1a1a2e';
+                ctx.strokeStyle = fishCardData.color;
+                ctx.lineWidth = 3;
+                ctx.shadowColor = fishCardData.color;
+                ctx.shadowBlur = 20;
+                ctx.beginPath();
+                ctx.roundRect(cardX, cardY, cardWidth, cardHeight, 15);
+                ctx.fill();
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                
+                // عنوان
+                ctx.fillStyle = fishCardData.color;
+                ctx.font = 'bold 22px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('🎣 ماهی گرفتی!', cardX + cardWidth/2, cardY + 40);
+                
+                // عکس ماهی
+                const imgSize = 100;
+                ctx.drawImage(mahiImage, cardX + (cardWidth - imgSize)/2, cardY + 60, imgSize, imgSize);
+                
+                // اسم ماهی
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px system-ui';
+                ctx.fillText(fishCardData.name, cardX + cardWidth/2, cardY + 185);
+                
+                // توضیحات
+                ctx.fillStyle = '#cccccc';
+                ctx.font = '13px system-ui';
+                const lines = fishCardData.desc.split('\n');
+                lines.forEach((line, i) => {
+                    ctx.fillText(line, cardX + cardWidth/2, cardY + 215 + i * 22);
+                });
+                
+                // دکمه تایید
+                const btnWidth = 120;
+                const btnHeight = 40;
+                const btnX = cardX + (cardWidth - btnWidth) / 2;
+                const btnY = cardY + cardHeight - 70;
+                
+                ctx.fillStyle = fishCardData.color;
+                ctx.beginPath();
+                ctx.roundRect(btnX, btnY, btnWidth, btnHeight, 10);
+                ctx.fill();
+                
+                ctx.fillStyle = '#000000';
+                ctx.font = 'bold 16px system-ui';
+                ctx.fillText('👍 تایید', btnX + btnWidth/2, btnY + btnHeight/2 + 5);
+            }
+
+            function drawToolbar() {
+                const totalWidth = 4 * (TOOLBAR_SQUARE_SIZE + TOOLBAR_PADDING) - TOOLBAR_PADDING;
+                const startX = (canvas.width - totalWidth) / 2;
+                const startY = canvas.height - TOOLBAR_SQUARE_SIZE - TOOLBAR_Y_OFFSET;
+                
+                toolbarSquares = [];
+                for (let i = 0; i < 4; i++) {
+                    toolbarSquares.push({
+                        x: startX + i * (TOOLBAR_SQUARE_SIZE + TOOLBAR_PADDING),
+                        y: startY,
+                        size: TOOLBAR_SQUARE_SIZE
+                    });
+                }
+                
+                ctx.save();
+                ctx.fillStyle = 'rgba(10, 10, 25, 0.8)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 1.5;
+                const barX = startX - TOOLBAR_PADDING;
+                const barY = startY - TOOLBAR_PADDING;
+                const barW = totalWidth + TOOLBAR_PADDING * 2;
+                const barH = TOOLBAR_SQUARE_SIZE + TOOLBAR_PADDING * 2;
+                ctx.beginPath();
+                ctx.roundRect(barX, barY, barW, barH, 10);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+                
+                for (let i = 0; i < toolbarSquares.length; i++) {
+                    const sq = toolbarSquares[i];
+                    
+                    ctx.save();
+                    
+                    if (selectedTool === i) {
+                        ctx.fillStyle = 'rgba(34, 197, 94, 0.3)';
+                        ctx.strokeStyle = '#22c55e';
+                        ctx.lineWidth = 3;
+                        ctx.shadowColor = 'rgba(34, 197, 94, 0.6)';
+                        ctx.shadowBlur = 8;
+                    } else {
+                        ctx.fillStyle = 'rgba(30, 30, 50, 0.6)';
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                        ctx.lineWidth = 1.5;
+                        ctx.shadowColor = 'transparent';
+                        ctx.shadowBlur = 0;
+                    }
+                    
+                    ctx.beginPath();
+                    ctx.roundRect(sq.x, sq.y, sq.size, sq.size, 6);
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+                    
+                    if (i === 0 && choobLoaded && choobImage.complete) {
+                        const imgPadding = 6;
+                        ctx.save();
+                        ctx.drawImage(choobImage, sq.x + imgPadding, sq.y + imgPadding, sq.size - imgPadding * 2, sq.size - imgPadding * 2);
+                        ctx.restore();
+                    }
+                    
+                    if (toolbarItems[i] === 'fish' && mahiLoaded && mahiImage.complete) {
+                        const imgPadding = 6;
+                        ctx.save();
+                        ctx.drawImage(mahiImage, sq.x + imgPadding, sq.y + imgPadding, sq.size - imgPadding * 2, sq.size - imgPadding * 2);
+                        ctx.restore();
+                    }
+                }
+            }
+
+            function drawWorld() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                if (backgroundLoaded && backgroundImage.complete) {
+                    ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+                } else {
+                    ctx.fillStyle = '#0f0f1f';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
+
+                ctx.save();
+                ctx.translate(-cameraX, -cameraY);
+
+                ctx.strokeStyle = 'rgba(180, 180, 255, 0.06)';
+                ctx.lineWidth = 0.8;
+                const gridStep = 110;
+                const startX = Math.floor(cameraX / gridStep) * gridStep;
+                const startY = Math.floor(cameraY / gridStep) * gridStep;
+                const endX = cameraX + canvas.width + gridStep;
+                const endY = cameraY + canvas.height + gridStep;
+                for (let x = startX; x <= endX; x += gridStep) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, startY);
+                    ctx.lineTo(x, endY);
+                    ctx.stroke();
+                }
+                for (let y = startY; y <= endY; y += gridStep) {
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y);
+                    ctx.lineTo(endX, y);
+                    ctx.stroke();
+                }
+
+                ctx.fillStyle = 'rgba(200, 200, 255, 0.08)';
+                const dotStep = 45;
+                for (let x = Math.floor(cameraX / dotStep) * dotStep; x <= endX; x += dotStep) {
+                    for (let y = Math.floor(cameraY / dotStep) * dotStep; y <= endY; y += dotStep) {
+                        ctx.beginPath();
+                        ctx.arc(x, y, 1.3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                }
+
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(0, 0, worldWidth, worldHeight);
+
+                if (lakeImageLoaded && lakeImage.complete) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(lakeCenterX, lakeCenterY, LAKE_RADIUS, 0, Math.PI * 2);
+                    ctx.clip();
+                    ctx.drawImage(lakeImage, lakeCenterX - LAKE_RADIUS, lakeCenterY - LAKE_RADIUS, LAKE_RADIUS * 2, LAKE_RADIUS * 2);
+                    ctx.restore();
+                    ctx.save();
+                    ctx.strokeStyle = 'rgba(100, 180, 255, 0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(lakeCenterX, lakeCenterY, LAKE_RADIUS, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                if (waypoints.length > 0 && hasTarget) {
+                    ctx.save();
+                    ctx.fillStyle = '#ff9f1c';
+                    ctx.shadowColor = 'rgba(255, 159, 28, 0.7)';
+                    ctx.shadowBlur = 12;
+                    for (const wp of waypoints) {
+                        ctx.beginPath();
+                        ctx.arc(wp.x, wp.y, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                }
+
+                if (targetAlpha > 0.01) {
+                    ctx.save();
+                    ctx.globalAlpha = targetAlpha;
+                    const grad = ctx.createRadialGradient(targetWorldX, targetWorldY, 3, targetWorldX, targetWorldY, 30);
+                    grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+                    grad.addColorStop(0.6, 'rgba(255,255,255,0.3)');
+                    grad.addColorStop(1, 'rgba(255,255,200,0)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(targetWorldX, targetWorldY, 24, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(targetWorldX, targetWorldY, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+
+                if (trailPositions.length > 1) {
+                    for (let i = 0; i < trailPositions.length; i++) {
+                        const pos = trailPositions[i];
+                        const progress = i / (trailPositions.length - 1 || 1);
+                        const alpha = 0.04 + progress * 0.2;
+                        const scale = 0.55 + progress * 0.45;
+                        drawImageShape(pos.x, pos.y, alpha, scale);
+                    }
+                }
+
+                drawImageShape(squareWorldX, squareWorldY, 1.0, 1.0);
+                drawWoodOnPenguin();
+                drawFishingLine();
+                drawCaughtFish();
+                drawQuestionMark();
+                drawChargeBar();
+
+                if (hasTarget && targetAlpha > 0.15) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.3;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 1.3;
+                    ctx.setLineDash([7, 9]);
+                    ctx.beginPath();
+                    ctx.moveTo(squareWorldX + BASE_SIZE/2, squareWorldY + BASE_SIZE/2);
+                    if (waypoints.length > 0) {
+                        ctx.lineTo(waypoints[0].x, waypoints[0].y);
+                    } else {
+                        ctx.lineTo(targetWorldX, targetWorldY);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
+                ctx.restore();
+                drawToolbar();
+                drawFishCard();
+            }
+
+            function drawMinimap() {
+                const mmX = canvas.width - MINIMAP_WIDTH - MINIMAP_PADDING;
+                const mmY = MINIMAP_PADDING;
+
+                ctx.save();
+                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                ctx.shadowBlur = 12;
+                ctx.fillStyle = 'rgba(10, 10, 22, 0.75)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.roundRect(mmX, mmY, MINIMAP_WIDTH, MINIMAP_HEIGHT, MINIMAP_BORDER_RADIUS);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+
+                const margin = 4;
+                const mapLeft = mmX + margin;
+                const mapTop = mmY + margin;
+                const mapWidth = MINIMAP_WIDTH - margin * 2;
+                const mapHeight = MINIMAP_HEIGHT - margin * 2;
+                const scaleX = mapWidth / worldWidth;
+                const scaleY = mapHeight / worldHeight;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.roundRect(mmX, mmY, MINIMAP_WIDTH, MINIMAP_HEIGHT, MINIMAP_BORDER_RADIUS);
+                ctx.clip();
+
+                ctx.fillStyle = 'rgba(25, 25, 45, 0.8)';
+                ctx.fillRect(mapLeft, mapTop, mapWidth, mapHeight);
+
+                const lakeMiniX = mapLeft + lakeCenterX * scaleX;
+                const lakeMiniY = mapTop + lakeCenterY * scaleY;
+                const lakeMiniR = LAKE_RADIUS * scaleX;
+                ctx.fillStyle = 'rgba(30, 100, 200, 0.6)';
+                ctx.beginPath();
+                ctx.arc(lakeMiniX, lakeMiniY, Math.max(lakeMiniR, 3), 0, Math.PI*2);
+                ctx.fill();
+
+                ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+                ctx.lineWidth = 0.3;
+                for (let wx = 0; wx <= worldWidth; wx += 200) {
+                    ctx.beginPath();
+                    ctx.moveTo(mapLeft + wx * scaleX, mapTop);
+                    ctx.lineTo(mapLeft + wx * scaleX, mapTop + mapHeight);
+                    ctx.stroke();
+                }
+                for (let wy = 0; wy <= worldHeight; wy += 200) {
+                    ctx.beginPath();
+                    ctx.moveTo(mapLeft, mapTop + wy * scaleY);
+                    ctx.lineTo(mapLeft + mapWidth, mapTop + wy * scaleY);
+                    ctx.stroke();
+                }
+
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+                ctx.lineWidth = 1.8;
+                ctx.strokeRect(mapLeft + cameraX * scaleX, mapTop + cameraY * scaleY, canvas.width * scaleX, canvas.height * scaleY);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(mapLeft + squareWorldX * scaleX, mapTop + squareWorldY * scaleY, Math.max(4, BASE_SIZE * scaleX), Math.max(4, BASE_SIZE * scaleX));
+
+                if (hasTarget || targetAlpha > 0.1) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.beginPath();
+                    ctx.arc(mapLeft + targetWorldX * scaleX, mapTop + targetWorldY * scaleY, 2.4, 0, 2*Math.PI);
+                    ctx.fill();
+                }
+
+                ctx.restore();
+
+                ctx.save();
+                ctx.font = '9px system-ui';
+                ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                ctx.fillText('نقشه', mmX + 6, mmY + 14);
+                ctx.restore();
+            }
+
+            function animationLoop() {
+                update();
+                drawWorld();
+                drawMinimap();
+                requestAnimationFrame(animationLoop);
+            }
+
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                updateWorldSize();
+                clampSquareToWorld();
+                updateCamera();
+            }
+
+            window.addEventListener('resize', resizeCanvas);
+            canvas.addEventListener('mousedown', onPointerDown);
+            canvas.addEventListener('mouseup', onPointerUp);
+            canvas.addEventListener('mouseleave', onPointerUp);
+            canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+            canvas.addEventListener('touchend', onPointerUp);
+            document.addEventListener('touchmove', preventTouchDefaults, { passive: false });
+            document.addEventListener('gesturestart', preventTouchDefaults);
+            document.addEventListener('gesturechange', preventTouchDefaults);
+            document.addEventListener('gestureend', preventTouchDefaults);
+
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            function init() {
+                resizeCanvas();
+                loadInitialImages();
+                toolbarItems = [null, null, null, null];
+                squareWorldX = lakeCenterX + LAKE_RADIUS + 60;
+                squareWorldY = lakeCenterY - 100;
+                currentShape = 'square';
+                targetWorldX = squareWorldX + BASE_SIZE/2;
+                targetWorldY = squareWorldY + BASE_SIZE/2;
+                hasTarget = false;
+                targetAlpha = 0;
+                waypoints = [];
+                trailPositions.length = 0;
+                for (let i = 0; i < TRAIL_LENGTH; i++) {
+                    trailPositions.push({ x: squareWorldX, y: squareWorldY });
+                }
+                cameraX = squareWorldX + BASE_SIZE/2 - canvas.width/2;
+                cameraY = squareWorldY + BASE_SIZE/2 - canvas.height/2;
+                updateCamera();
+                animationLoop();
+            }
+
+            init();
+        })();
+    </script>
+</body>
+</html>
